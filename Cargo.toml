@@ -1,0 +1,7 @@
+[package]
+name = "aws-futz"
+version = "0.1.0"
+authors = ["Joshua M. Clulow <josh@sysmgr.org>"]
+edition = "2018"
+
+[dependencies]
