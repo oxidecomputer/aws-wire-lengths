@@ -5,3 +5,13 @@ authors = ["Joshua M. Clulow <josh@sysmgr.org>"]
 edition = "2018"
 
 [dependencies]
+rusoto_core = "0.45.0"
+rusoto_ec2 = "0.45.0"
+rusoto_s3 = "0.45.0"
+rusoto_credential = "0.45.0"
+tokio = { version = "0.2", features = ["macros", "rt-threaded"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde-xml-rs = "0.4"
+xml-rs = "0.8"
+getopts = "0.2"
