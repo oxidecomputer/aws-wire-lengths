@@ -8,6 +8,12 @@ use rusoto_ec2::{
     DescribeConversionTasksRequest,
     DiskImageDetail,
     VolumeDetail,
+    CreateSnapshotRequest,
+    DescribeSnapshotsRequest,
+    RegisterImageRequest,
+    BlockDeviceMapping,
+    EbsBlockDevice,
+    DescribeImagesRequest,
 };
 use rusoto_s3::{
     S3,
@@ -244,7 +250,7 @@ async fn import_volume(s: Stuff<'_>) -> Result<()> {
             if let Some(ivtd) = &ct.import_volume {
                 if let Some(vol) = &ivtd.volume {
                     if let Some(id) = &vol.id {
-                        if !id.is_empty() {
+                        if !id.trim().is_empty() {
                             println!("INFO: volume ID is {}", id);
                             volid = Some(id.to_string());
                         }
@@ -283,7 +289,130 @@ async fn import_volume(s: Stuff<'_>) -> Result<()> {
 
 async fn create_snapshot(s: Stuff<'_>) -> Result<()> {
     let volid = s.args.opt_str("v").unwrap();
-    println!("HA HA: {}", volid);
+
+    let res = s.ec2.create_snapshot(CreateSnapshotRequest {
+        volume_id: volid.clone(),
+        ..Default::default()
+    }).await?;
+
+    println!("res: {:#?}", res);
+
+    let snapid = res.snapshot_id.unwrap();
+    println!("SNAPSHOT ID: {}", snapid);
+
+    loop {
+        let res = s.ec2.describe_snapshots(DescribeSnapshotsRequest {
+            snapshot_ids: Some(vec![snapid.clone()]),
+            ..Default::default()
+        }).await?;
+
+        let snapshots = res.snapshots.as_ref().unwrap();
+
+        if snapshots.len() != 1 {
+            println!("got {} snapshots?!", snapshots.len());
+            sleep(5_000);
+            continue;
+        }
+        let snap = &snapshots[0];
+
+        println!("snapshot state: {:#?}", snap);
+
+        if snap.state.as_deref().unwrap() == "completed" {
+            println!("COMPLETED SNAPSHOT ID: {}", snapid);
+            break;
+        }
+
+        sleep(5_000);
+    }
+
+    Ok(())
+}
+
+fn ss(s: &str) -> Option<String> {
+    Some(s.to_string())
+}
+
+async fn register_image(s: Stuff<'_>) -> Result<()> {
+    let name = s.args.opt_str("n").unwrap();
+    let snapid = s.args.opt_str("s").unwrap();
+
+    let res = s.ec2.describe_snapshots(DescribeSnapshotsRequest {
+        snapshot_ids: Some(vec![snapid.clone()]),
+        ..Default::default()
+    }).await?;
+    let snap = res.snapshots.unwrap().get(0).unwrap().clone();
+
+    let res = s.ec2.register_image(RegisterImageRequest {
+        name: name.clone(),
+        root_device_name: ss("/dev/sda1"),
+        virtualization_type: ss("hvm"),
+        architecture: ss("x86_64"),
+        ena_support: Some(false),
+        block_device_mappings: Some(vec![
+            BlockDeviceMapping {
+                device_name: ss("/dev/sda1"), /* XXX? */
+                ebs: Some(EbsBlockDevice {
+                    snapshot_id: Some(snapid.clone()),
+                    volume_type: ss("gp2"), /* XXX? */
+                    volume_size: snap.volume_size,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            BlockDeviceMapping {
+                device_name: ss("/dev/sdb"), /* XXX? */
+                virtual_name: ss("ephemeral0"), /* XXX? */
+                ..Default::default()
+            },
+            BlockDeviceMapping {
+                device_name: ss("/dev/sdc"), /* XXX? */
+                virtual_name: ss("ephemeral1"), /* XXX? */
+                ..Default::default()
+            },
+            BlockDeviceMapping {
+                device_name: ss("/dev/sdd"), /* XXX? */
+                virtual_name: ss("ephemeral2"), /* XXX? */
+                ..Default::default()
+            },
+            BlockDeviceMapping {
+                device_name: ss("/dev/sde"), /* XXX? */
+                virtual_name: ss("ephemeral3"), /* XXX? */
+                ..Default::default()
+            },
+        ]),
+        ..Default::default()
+    }).await?;
+
+    println!("res: {:#?}", res);
+
+    let imageid = res.image_id.unwrap();
+    println!("IMAGE ID: {}", snapid);
+
+    loop {
+        let res = s.ec2.describe_images(DescribeImagesRequest {
+            image_ids: Some(vec![imageid.clone()]),
+            ..Default::default()
+        }).await?;
+
+        let images = res.images.as_ref().unwrap();
+
+        if images.len() != 1 {
+            println!("got {} images?!", images.len());
+            sleep(5_000);
+            continue;
+        }
+        let image = &images[0];
+
+        println!("image state: {:#?}", image);
+
+        if image.state.as_deref().unwrap() == "available" {
+            println!("COMPLETED IMAGE ID: {}", imageid);
+            break;
+        }
+
+        sleep(5_000);
+    }
+
     Ok(())
 }
 
@@ -316,6 +445,13 @@ async fn main() -> Result<()> {
             opts.reqopt("v", "volume", "volume ID to snapshot", "VOLUME_ID");
 
             |s| Box::pin(create_snapshot(s))
+        }
+        Some("register-image") => {
+            opts.reqopt("s", "snapshot", "snapshot ID to register",
+                "SNAPSHOT_ID");
+            opts.reqopt("n", "name", "target image name", "NAME");
+
+            |s| Box::pin(register_image(s))
         }
         cmd => bail!("invalid command {:?}", cmd),
     };
