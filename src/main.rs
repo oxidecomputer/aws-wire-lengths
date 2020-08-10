@@ -33,7 +33,8 @@ use std::pin::Pin;
 use std::future::Future;
 
 const BUCKET: &str = "oxide-disk-images";
-const REGION: Region = Region::UsEast1;
+const S3_REGION: Region = Region::UsEast1;
+const EC2_REGION: Region = Region::UsWest2; /* XXX Oregon while testing big VMs */
 
 trait EventWriterExt {
     fn simple_tag(&mut self, n: &str, v: &str) -> Result<()>;
@@ -58,7 +59,7 @@ async fn sign_delete(c: &dyn ProvideAwsCredentials, k: &str) -> Result<String> {
         bucket: BUCKET.to_string(),
         key: k.to_string(),
         ..Default::default()
-    }.get_presigned_url(&REGION, &creds, &PreSignedRequestOption {
+    }.get_presigned_url(&S3_REGION, &creds, &PreSignedRequestOption {
         expires_in: Duration::from_secs(3600)
     }))
 }
@@ -66,7 +67,7 @@ async fn sign_delete(c: &dyn ProvideAwsCredentials, k: &str) -> Result<String> {
 async fn sign_head(c: &dyn ProvideAwsCredentials, k: &str) -> Result<String> {
     let creds = c.credentials().await?;
     let uri = format!("/{}/{}", BUCKET, k);
-    let mut req = SignedRequest::new("HEAD", "s3", &REGION, &uri);
+    let mut req = SignedRequest::new("HEAD", "s3", &S3_REGION, &uri);
     let params = Params::new();
 
     let expires_in = Duration::from_secs(3600);
@@ -81,7 +82,7 @@ async fn sign_get(c: &dyn ProvideAwsCredentials, k: &str) -> Result<String> {
         bucket: BUCKET.to_string(),
         key: k.to_string(),
         ..Default::default()
-    }.get_presigned_url(&REGION, &creds, &PreSignedRequestOption {
+    }.get_presigned_url(&S3_REGION, &creds, &PreSignedRequestOption {
         expires_in: Duration::from_secs(3600)
     }))
 }
@@ -131,7 +132,16 @@ async fn import_volume(s: Stuff<'_>) -> Result<()> {
     let kimage = pfx.clone() + "/disk.raw";
     let kmanifest = pfx.clone() + "/manifest.xml";
 
-    let sz = image_size(s.s3, &kimage).await?;
+    let volid = i_import_volume(s, &kimage, &kmanifest).await?;
+    println!("COMPLETED VOLUME ID: {}", volid);
+
+    Ok(())
+}
+
+async fn i_import_volume(s: Stuff<'_>, kimage: &str, kmanifest: &str)
+    -> Result<String>
+{
+    let sz = image_size(s.s3, kimage).await?;
 
     /*
      * Upload raw:
@@ -153,7 +163,7 @@ async fn import_volume(s: Stuff<'_>) -> Result<()> {
     w.write(XmlEvent::end_element())?;
 
     w.simple_tag("self-destruct-url",
-        &sign_delete(s.credprov, &kmanifest).await?)?;
+        &sign_delete(s.credprov, kmanifest).await?)?;
 
     w.write(XmlEvent::start_element("import"))?;
 
@@ -166,10 +176,10 @@ async fn import_volume(s: Stuff<'_>) -> Result<()> {
         .attr("start", "0")
         .attr("end", &sz.end()))?;
     w.write(XmlEvent::end_element())?; /* byte-range */
-    w.simple_tag("key", &kimage)?;
-    w.simple_tag("head-url", &sign_head(s.credprov, &kimage).await?)?;
-    w.simple_tag("get-url", &sign_get(s.credprov, &kimage).await?)?;
-    w.simple_tag("delete-url", &sign_delete(s.credprov, &kimage).await?)?;
+    w.simple_tag("key", kimage)?;
+    w.simple_tag("head-url", &sign_head(s.credprov, kimage).await?)?;
+    w.simple_tag("get-url", &sign_get(s.credprov, kimage).await?)?;
+    w.simple_tag("delete-url", &sign_delete(s.credprov, kimage).await?)?;
     w.write(XmlEvent::end_element())?; /* part */
 
     w.write(XmlEvent::end_element())?; /* parts */
@@ -180,11 +190,11 @@ async fn import_volume(s: Stuff<'_>) -> Result<()> {
 
     println!("{}", String::from_utf8(out.clone())?);
 
-    println!("uploading -> {}", &kmanifest);
+    println!("uploading -> {}", kmanifest);
 
     let req = PutObjectRequest {
         bucket: BUCKET.to_string(),
-        key: kmanifest.clone(),
+        key: kmanifest.to_string(),
         body: Some(out.into()),
         ..Default::default()
     };
@@ -194,7 +204,7 @@ async fn import_volume(s: Stuff<'_>) -> Result<()> {
 
     println!("importing volume...");
 
-    let availability_zone = REGION.name().to_string() + "a";
+    let availability_zone = EC2_REGION.name().to_string() + "a";
     let import_manifest_url = sign_get(s.credprov, &kmanifest).await?;
     let res = s.ec2.import_volume(ImportVolumeRequest {
         availability_zone,
@@ -280,18 +290,25 @@ async fn import_volume(s: Stuff<'_>) -> Result<()> {
         sleep(5_000);
     };
 
-    println!("final state: {:#?}", cts);
-    println!("conversion task ID: {:?}", ctid);
-    println!("volume ID: {:?}", volid);
+    if volid.is_none() {
+        bail!("completed, but no volume ID?! {:#?}", cts);
+    }
 
-    Ok(())
+    Ok(volid.unwrap())
 }
 
 async fn create_snapshot(s: Stuff<'_>) -> Result<()> {
     let volid = s.args.opt_str("v").unwrap();
 
+    let snapid = i_create_snapshot(s, &volid).await?;
+    println!("COMPLETED SNAPSHOT ID: {}", snapid);
+
+    Ok(())
+}
+
+async fn i_create_snapshot(s: Stuff<'_>, volid: &str) -> Result<String> {
     let res = s.ec2.create_snapshot(CreateSnapshotRequest {
-        volume_id: volid.clone(),
+        volume_id: volid.to_string(),
         ..Default::default()
     }).await?;
 
@@ -315,35 +332,74 @@ async fn create_snapshot(s: Stuff<'_>) -> Result<()> {
         }
         let snap = &snapshots[0];
 
-        println!("snapshot state: {:#?}", snap);
+        let state = snap.state.as_deref().unwrap().to_string();
 
-        if snap.state.as_deref().unwrap() == "completed" {
-            println!("COMPLETED SNAPSHOT ID: {}", snapid);
-            break;
+        let mut msg = snapid.to_string() + ": " + &state;
+        if let Some(extra) = &snap.state_message {
+            msg += ": ";
+            msg += extra;
         }
+        if let Some(extra) = &snap.progress {
+            msg += ": progress ";
+            msg += extra;
+        }
+
+        // println!("snapshot state: {:#?}", snap);
+
+        if &state == "completed" {
+            return Ok(snapid);
+        }
+
+        println!("waiting: {}", msg);
 
         sleep(5_000);
     }
-
-    Ok(())
 }
 
 fn ss(s: &str) -> Option<String> {
     Some(s.to_string())
 }
 
+async fn everything(s: Stuff<'_>) -> Result<()> {
+    let name = s.args.opt_str("n").unwrap();
+    let pfx = s.args.opt_str("p").unwrap();
+
+    let kimage = pfx.clone() + "/disk.raw";
+    let kmanifest = pfx.clone() + "/manifest.xml";
+
+    let volid = i_import_volume(s, &kimage, &kmanifest).await?;
+    println!("COMPLETED VOLUME ID: {}", volid);
+
+    let snapid = i_create_snapshot(s, &volid).await?;
+    println!("COMPLETED SNAPSHOT ID: {}", snapid);
+
+    let ami = i_register_image(s, &name, &snapid).await?;
+    println!("COMPLETED IMAGE ID: {}", ami);
+
+    Ok(())
+}
+
 async fn register_image(s: Stuff<'_>) -> Result<()> {
     let name = s.args.opt_str("n").unwrap();
     let snapid = s.args.opt_str("s").unwrap();
 
+    let imageid = i_register_image(s, &name, &snapid).await?;
+    println!("COMPLETED IMAGE ID: {}", imageid);
+
+    Ok(())
+}
+
+async fn i_register_image(s: Stuff<'_>, name: &str, snapid: &str)
+    -> Result<String>
+{
     let res = s.ec2.describe_snapshots(DescribeSnapshotsRequest {
-        snapshot_ids: Some(vec![snapid.clone()]),
+        snapshot_ids: Some(vec![snapid.to_string()]),
         ..Default::default()
     }).await?;
     let snap = res.snapshots.unwrap().get(0).unwrap().clone();
 
     let res = s.ec2.register_image(RegisterImageRequest {
-        name: name.clone(),
+        name: name.to_string(),
         root_device_name: ss("/dev/sda1"),
         virtualization_type: ss("hvm"),
         architecture: ss("x86_64"),
@@ -352,7 +408,7 @@ async fn register_image(s: Stuff<'_>) -> Result<()> {
             BlockDeviceMapping {
                 device_name: ss("/dev/sda1"), /* XXX? */
                 ebs: Some(EbsBlockDevice {
-                    snapshot_id: Some(snapid.clone()),
+                    snapshot_id: Some(snapid.to_string()),
                     volume_type: ss("gp2"), /* XXX? */
                     volume_size: snap.volume_size,
                     ..Default::default()
@@ -390,7 +446,7 @@ async fn register_image(s: Stuff<'_>) -> Result<()> {
 
     loop {
         let res = s.ec2.describe_images(DescribeImagesRequest {
-            image_ids: Some(vec![imageid.clone()]),
+            image_ids: Some(vec![imageid.to_string()]),
             ..Default::default()
         }).await?;
 
@@ -406,16 +462,14 @@ async fn register_image(s: Stuff<'_>) -> Result<()> {
         println!("image state: {:#?}", image);
 
         if image.state.as_deref().unwrap() == "available" {
-            println!("COMPLETED IMAGE ID: {}", imageid);
-            break;
+            return Ok(imageid);
         }
 
         sleep(5_000);
     }
-
-    Ok(())
 }
 
+#[derive(Copy, Clone)]
 struct Stuff<'a> {
     s3: &'a dyn S3,
     ec2: &'a dyn Ec2,
@@ -429,13 +483,21 @@ type Caller<'a> = fn(Stuff<'a>)
 #[tokio::main]
 async fn main() -> Result<()> {
     let credprov = DefaultCredentialsProvider::new()?;
-    let s3 = S3Client::new_with(HttpClient::new()?, credprov.clone(), REGION);
-    let ec2 = Ec2Client::new_with(HttpClient::new()?, credprov.clone(), REGION);
+    let s3 = S3Client::new_with(HttpClient::new()?, credprov.clone(),
+        S3_REGION);
+    let ec2 = Ec2Client::new_with(HttpClient::new()?, credprov.clone(),
+        EC2_REGION);
 
     let mut opts = getopts::Options::new();
     opts.parsing_style(getopts::ParsingStyle::StopAtFirstFree);
 
     let f: Caller = match std::env::args().skip(1).next().as_deref() {
+        Some("everything") => {
+            opts.reqopt("p", "prefix", "S3 prefix", "PREFIX");
+            opts.reqopt("n", "name", "target image name", "NAME");
+
+            |s| Box::pin(everything(s))
+        }
         Some("import-volume") => {
             opts.reqopt("p", "prefix", "S3 prefix", "PREFIX");
 
