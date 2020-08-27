@@ -32,9 +32,9 @@ use std::time::Duration;
 use std::pin::Pin;
 use std::future::Future;
 
-const BUCKET: &str = "oxide-disk-images";
-const S3_REGION: Region = Region::UsEast1;
-const EC2_REGION: Region = Region::UsWest2; /* XXX Oregon while testing big VMs */
+const BUCKET: &str = "oxide-disk-images-west";
+const S3_REGION: Region = Region::UsWest2;
+const EC2_REGION: Region = Region::UsWest2;
 
 trait EventWriterExt {
     fn simple_tag(&mut self, n: &str, v: &str) -> Result<()>;
