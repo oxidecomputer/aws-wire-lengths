@@ -1,6 +1,7 @@
 use rusoto_core::{Region, HttpClient};
 use rusoto_core::signature::SignedRequest;
 use rusoto_core::param::Params;
+use rusoto_ec2 as ec2;
 use rusoto_ec2::{
     Ec2,
     Ec2Client,
@@ -15,6 +16,7 @@ use rusoto_ec2::{
     EbsBlockDevice,
     DescribeImagesRequest,
 };
+use rusoto_s3 as s3;
 use rusoto_s3::{
     S3,
     S3Client,
@@ -379,6 +381,347 @@ async fn everything(s: Stuff<'_>) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug)]
+struct Attach {
+    state: String,
+    instance_id: String,
+}
+
+#[derive(Debug)]
+struct Volume {
+    name: String,
+    id: String,
+    state: String,
+    attach: Option<Attach>,
+}
+
+#[derive(Debug, Clone)]
+enum VolumeLookup {
+    ById(String),
+    ByName(String),
+}
+
+#[derive(Debug)]
+struct Instance {
+    name: String,
+    id: String,
+    ip: String,
+    state: String,
+}
+
+#[derive(Debug, Clone)]
+enum InstanceLookup {
+    ById(String),
+    ByName(String),
+}
+
+async fn detach_volume(s: &Stuff<'_>, id: &str) -> Result<()> {
+    let lookup = VolumeLookup::ById(id.to_string());
+
+    println!("detaching volume {}...", id);
+
+    let mut detached = false;
+
+    loop {
+        let vol = get_volume(s, lookup.clone()).await?;
+
+        println!("    state: {}", vol.state);
+        if vol.state == "available" {
+            println!("volume now available!");
+            return Ok(());
+        }
+
+        if let Some(a) = &vol.attach {
+            println!("    attach: {:?}", a);
+
+            if !detached {
+                let res = s.ec2.detach_volume(ec2::DetachVolumeRequest {
+                    volume_id: vol.id.clone(),
+                    ..Default::default()
+                }).await?;
+
+                println!("    {:#?}", res);
+                detached = true;
+            }
+        }
+
+        sleep(1000);
+    }
+}
+
+async fn stop_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
+    let lookup = InstanceLookup::ById(id.to_string());
+
+    println!("stopping instance {}...", id);
+
+    let mut stopped = false;
+
+    loop {
+        let inst = get_instance(s, lookup.clone()).await?;
+
+        let shouldstop = match inst.state.as_str() {
+            n @ "stopped" => {
+                println!("    state is {}; done!", n);
+                return Ok(());
+            }
+            n => {
+                println!("    state is {}", n);
+                n == "running"
+            }
+        };
+
+        if shouldstop && !stopped {
+            println!("    stopping...");
+            let res = s.ec2.stop_instances(ec2::StopInstancesRequest {
+                instance_ids: vec![id.to_string()],
+                ..Default::default()
+            }).await?;
+            println!("    {:#?}", res);
+        }
+
+        sleep(1000);
+    }
+}
+
+async fn get_volume(s: &Stuff<'_>, lookup: VolumeLookup)
+    -> Result<Volume>
+{
+    let filters = match &lookup {
+        VolumeLookup::ById(id) => Some(vec![
+            ec2::Filter {
+                name: Some("volume-id".into()),
+                values: Some(vec![id.into()]),
+            },
+        ]),
+        VolumeLookup::ByName(name) => Some(vec![
+            ec2::Filter {
+                name: Some("tag:Name".into()),
+                values: Some(vec![name.into()]),
+            },
+        ]),
+    };
+
+    let res = s.ec2.describe_volumes(ec2::DescribeVolumesRequest {
+        filters,
+        ..Default::default()
+    }).await?;
+
+    let mut out: Vec<Volume> = Vec::new();
+
+    for vol in res.volumes.as_ref().unwrap_or(&vec![]).iter() {
+        /*
+         * Find the name tag value:
+         */
+        let tags = vol.tags.as_ref().unwrap();
+        let nametag = tags.iter()
+            .find(|t| t.key.as_deref() == Some("Name"))
+            .and_then(|t| t.value.as_deref());
+
+        let mat = match &lookup {
+            VolumeLookup::ById(id) => {
+                &id.as_str() == &vol.volume_id.as_deref().unwrap()
+            }
+            VolumeLookup::ByName(name) => {
+                Some(name.as_str()) == nametag
+            }
+        };
+
+        if mat {
+            /*
+             * Check into the attach state.
+             */
+            let attach = if let Some(att) = vol.attachments.as_ref() {
+                if att.len() > 1 {
+                    bail!("matching volume has {} attachments: {:#?}",
+                        att.len(), vol);
+                } else if att.len() == 1 {
+                    let a = att.get(0).unwrap();
+                    Some(Attach {
+                        state: a.state.as_deref().unwrap().to_string(),
+                        instance_id: a.instance_id.as_deref()
+                            .unwrap().to_string(),
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            out.push(Volume {
+                name: nametag.unwrap().to_string(),
+                id: vol.volume_id.as_deref().unwrap().to_string(),
+                state: vol.state.as_deref().unwrap().to_string(),
+                attach,
+            });
+        }
+    }
+
+    if out.is_empty() {
+        bail!("could not find volume to match {:?}", lookup);
+    }
+
+    if out.len() > 1 {
+        bail!("found too many volumes that match {:?}: {:#?}", lookup, out);
+    }
+
+    Ok(out.pop().unwrap())
+}
+
+async fn get_instance(s: &Stuff<'_>, lookup: InstanceLookup)
+    -> Result<Instance>
+{
+    let filters = match &lookup {
+        InstanceLookup::ById(id) => Some(vec![
+            ec2::Filter {
+                name: Some("instance-id".into()),
+                values: Some(vec![id.into()]),
+            },
+        ]),
+        InstanceLookup::ByName(name) => Some(vec![
+            ec2::Filter {
+                name: Some("tag:Name".into()),
+                values: Some(vec![name.into()]),
+            },
+        ]),
+    };
+
+    let res = s.ec2.describe_instances(ec2::DescribeInstancesRequest {
+        filters,
+        ..Default::default()
+    }).await?;
+
+    let mut out: Vec<Instance> = Vec::new();
+
+    for res in res.reservations.as_ref().unwrap_or(&vec![]).iter() {
+        for inst in res.instances.as_ref().unwrap_or(&vec![]).iter() {
+            /*
+             * Find the name tag value:
+             */
+            let tags = inst.tags.as_ref().unwrap();
+            let nametag = tags.iter()
+                .find(|t| t.key.as_deref() == Some("Name"))
+                .and_then(|t| t.value.as_deref());
+
+            let mat = match &lookup {
+                InstanceLookup::ById(id) => {
+                    &id.as_str() == &inst.instance_id.as_deref().unwrap()
+                }
+                InstanceLookup::ByName(name) => {
+                    Some(name.as_str()) == nametag
+                }
+            };
+
+            if mat {
+                out.push(Instance {
+                    name: nametag.unwrap().to_string(),
+                    id: inst.instance_id.as_deref().unwrap().to_string(),
+                    ip: inst.public_ip_address.as_deref().unwrap().to_string(),
+                    state: inst.state.as_ref().unwrap()
+                        .name.as_deref().unwrap().to_string(),
+                });
+            }
+        }
+    }
+
+    if out.is_empty() {
+        bail!("could not find instance to match {:?}", lookup);
+    }
+
+    if out.len() > 1 {
+        bail!("found too many instances that match {:?}: {:#?}", lookup, out);
+    }
+
+    Ok(out.pop().unwrap())
+}
+
+async fn melbourne(s: Stuff<'_>) -> Result<()> {
+    let target = s.args.opt_str("t").unwrap();
+
+    let res = s.ec2.describe_instances(ec2::DescribeInstancesRequest {
+        ..Default::default()
+    }).await?;
+
+    let i_melbourne = get_instance(&s,
+        InstanceLookup::ByName("melbourne".to_string())).await?;
+    let i_watson = get_instance(&s,
+        InstanceLookup::ByName("watson".to_string())).await?;
+    let v_melbourne = get_volume(&s,
+        VolumeLookup::ByName("melbourne".to_string())).await?;
+
+    println!("melbourne: {:?}", i_melbourne);
+    println!("watson: {:?}", i_watson);
+    println!("volume: {:?}", v_melbourne);
+
+    if let Some(a) = &v_melbourne.attach {
+        if a.instance_id == i_melbourne.id {
+            if target == i_melbourne.name {
+                println!("already attached to melbourne!");
+                return Ok(());
+            }
+
+            println!("need to stop melbourne");
+            stop_instance(&s, &i_melbourne.id).await?;
+
+            println!("need to detach volume from melbourne");
+            detach_volume(&s, &v_melbourne.id).await?;
+
+        } else if a.instance_id == i_watson.id {
+            if target == i_watson.name {
+                println!("already attached to watson!");
+                return Ok(());
+            } else {
+                println!("need to detach from watson");
+                detach_volume(&s, &v_melbourne.id).await?;
+            }
+        }
+    } else {
+        println!("not attached at all!");
+    }
+
+    /*
+     * Attach the volume to the expected target!
+     */
+    let avr = if target == "watson" {
+        ec2::AttachVolumeRequest {
+            device: "/dev/sdf".into(),
+            instance_id: i_watson.id.clone(),
+            volume_id: v_melbourne.id.clone(),
+            ..Default::default()
+        }
+    } else if target == "melbourne" {
+        ec2::AttachVolumeRequest {
+            device: "/dev/sda1".into(),
+            instance_id: i_melbourne.id.clone(),
+            volume_id: v_melbourne.id.clone(),
+            ..Default::default()
+        }
+    } else {
+        bail!("unexpected target: {}", target);
+    };
+
+    let res = s.ec2.attach_volume(avr).await?;
+    println!("attach result: {:#?}", res);
+
+    loop {
+        let vol = get_volume(&s, VolumeLookup::ById(v_melbourne.id.clone()))
+            .await?;
+
+        println!("{:?}", vol);
+
+        if let Some(a) = &vol.attach {
+            if a.state == "attached" && vol.state == "in-use" {
+                println!("all done, attached to {}!", target);
+                return Ok(());
+            }
+        }
+
+        sleep(1000);
+    }
+
+    Ok(())
+}
+
 async fn register_image(s: Stuff<'_>) -> Result<()> {
     let name = s.args.opt_str("n").unwrap();
     let snapid = s.args.opt_str("s").unwrap();
@@ -492,6 +835,11 @@ async fn main() -> Result<()> {
     opts.parsing_style(getopts::ParsingStyle::StopAtFirstFree);
 
     let f: Caller = match std::env::args().skip(1).next().as_deref() {
+        Some("melbourne") => {
+            opts.reqopt("t", "target", "target VM name", "NAME");
+
+            |s| Box::pin(melbourne(s))
+        }
         Some("everything") => {
             opts.reqopt("p", "prefix", "S3 prefix", "PREFIX");
             opts.reqopt("n", "name", "target image name", "NAME");
