@@ -372,6 +372,7 @@ async fn everything(s: Stuff<'_>) -> Result<()> {
     let name = s.args.opt_str("n").unwrap();
     let pfx = s.args.opt_str("p").unwrap();
     let bucket = s.args.opt_str("b").unwrap();
+    let support_ena = s.args.opt_present("E");
 
     let kimage = pfx.clone() + "/disk.raw";
     let kmanifest = pfx.clone() + "/manifest.xml";
@@ -382,7 +383,7 @@ async fn everything(s: Stuff<'_>) -> Result<()> {
     let snapid = i_create_snapshot(s, &volid).await?;
     println!("COMPLETED SNAPSHOT ID: {}", snapid);
 
-    let ami = i_register_image(s, &name, &snapid).await?;
+    let ami = i_register_image(s, &name, &snapid, support_ena).await?;
     println!("COMPLETED IMAGE ID: {}", ami);
 
     Ok(())
@@ -815,14 +816,15 @@ async fn melbourne(s: Stuff<'_>) -> Result<()> {
 async fn register_image(s: Stuff<'_>) -> Result<()> {
     let name = s.args.opt_str("n").unwrap();
     let snapid = s.args.opt_str("s").unwrap();
+    let support_ena = s.args.opt_present("E");
 
-    let imageid = i_register_image(s, &name, &snapid).await?;
+    let imageid = i_register_image(s, &name, &snapid, support_ena).await?;
     println!("COMPLETED IMAGE ID: {}", imageid);
 
     Ok(())
 }
 
-async fn i_register_image(s: Stuff<'_>, name: &str, snapid: &str)
+async fn i_register_image(s: Stuff<'_>, name: &str, snapid: &str, ena: bool)
     -> Result<String>
 {
     let res = s.ec2.describe_snapshots(DescribeSnapshotsRequest {
@@ -836,7 +838,7 @@ async fn i_register_image(s: Stuff<'_>, name: &str, snapid: &str)
         root_device_name: ss("/dev/sda1"),
         virtualization_type: ss("hvm"),
         architecture: ss("x86_64"),
-        ena_support: Some(false),
+        ena_support: Some(ena),
         block_device_mappings: Some(vec![
             BlockDeviceMapping {
                 device_name: ss("/dev/sda1"), /* XXX? */
@@ -943,6 +945,7 @@ async fn main() -> Result<()> {
             opts.reqopt("b", "bucket", "S3 bucket", "BUCKET");
             opts.reqopt("p", "prefix", "S3 prefix", "PREFIX");
             opts.reqopt("n", "name", "target image name", "NAME");
+            opts.optflag("E", "ena", "enable ENA support");
 
             |s| Box::pin(everything(s))
         }
@@ -961,6 +964,7 @@ async fn main() -> Result<()> {
             opts.reqopt("s", "snapshot", "snapshot ID to register",
                 "SNAPSHOT_ID");
             opts.reqopt("n", "name", "target image name", "NAME");
+            opts.optflag("E", "ena", "enable ENA support");
 
             |s| Box::pin(register_image(s))
         }
