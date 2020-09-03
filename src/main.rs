@@ -2,7 +2,7 @@ use rusoto_core::{Region, HttpClient};
 use rusoto_core::signature::SignedRequest;
 use rusoto_core::param::Params;
 use rusoto_ec2 as ec2;
-use rusoto_ec2::{
+use ec2::{
     Ec2,
     Ec2Client,
     ImportVolumeRequest,
@@ -17,7 +17,7 @@ use rusoto_ec2::{
     DescribeImagesRequest,
 };
 use rusoto_s3 as s3;
-use rusoto_s3::{
+use s3::{
     S3,
     S3Client,
     HeadObjectRequest,
@@ -449,6 +449,44 @@ async fn detach_volume(s: &Stuff<'_>, id: &str) -> Result<()> {
     }
 }
 
+async fn start_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
+    let lookup = InstanceLookup::ById(id.to_string());
+
+    println!("starting instance {}...", id);
+
+    let mut started = false;
+
+    loop {
+        let inst = get_instance(s, lookup.clone()).await?;
+
+        let shouldstart = match inst.state.as_str() {
+            "terminated" => {
+                bail!("cannot start a terminated instance?");
+            }
+            n @ "running" => {
+                println!("    state is {}; done!", n);
+                return Ok(());
+            }
+            n => {
+                println!("    state is {}", n);
+                n == "stopped"
+            }
+        };
+
+        if shouldstart && !started {
+            println!("    starting...");
+            let res = s.ec2.start_instances(ec2::StartInstancesRequest {
+                instance_ids: vec![id.to_string()],
+                ..Default::default()
+            }).await?;
+            println!("    {:#?}", res);
+            started = true;
+        }
+
+        sleep(1000);
+    }
+}
+
 async fn stop_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
     let lookup = InstanceLookup::ById(id.to_string());
 
@@ -477,6 +515,7 @@ async fn stop_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
                 ..Default::default()
             }).await?;
             println!("    {:#?}", res);
+            stopped = true;
         }
 
         sleep(1000);
@@ -635,12 +674,58 @@ async fn get_instance(s: &Stuff<'_>, lookup: InstanceLookup)
     Ok(out.pop().unwrap())
 }
 
+async fn info(s: Stuff<'_>) -> Result<()> {
+    if s.args.free.len() != 1 {
+        bail!("expect the name of just one instance");
+    }
+
+    let i = get_instance(&s,
+        InstanceLookup::ByName(s.args.free.get(0).unwrap().to_string()))
+        .await?;
+
+    println!("{:#?}", i);
+
+    Ok(())
+}
+
+async fn start(s: Stuff<'_>) -> Result<()> {
+    if s.args.free.len() != 1 {
+        bail!("expect the name of just one instance");
+    }
+
+    let i = get_instance(&s,
+        InstanceLookup::ByName(s.args.free.get(0).unwrap().to_string()))
+        .await?;
+
+    println!("starting instance: {:?}", i);
+
+    start_instance(&s, &i.id).await?;
+
+    println!("all done!");
+
+    Ok(())
+}
+
+async fn stop(s: Stuff<'_>) -> Result<()> {
+    if s.args.free.len() != 1 {
+        bail!("expect the name of just one instance");
+    }
+
+    let i = get_instance(&s,
+        InstanceLookup::ByName(s.args.free.get(0).unwrap().to_string()))
+        .await?;
+
+    println!("stopping instance: {:?}", i);
+
+    stop_instance(&s, &i.id).await?;
+
+    println!("all done!");
+
+    Ok(())
+}
+
 async fn melbourne(s: Stuff<'_>) -> Result<()> {
     let target = s.args.opt_str("t").unwrap();
-
-    let res = s.ec2.describe_instances(ec2::DescribeInstancesRequest {
-        ..Default::default()
-    }).await?;
 
     let i_melbourne = get_instance(&s,
         InstanceLookup::ByName("melbourne".to_string())).await?;
@@ -718,8 +803,6 @@ async fn melbourne(s: Stuff<'_>) -> Result<()> {
 
         sleep(1000);
     }
-
-    Ok(())
 }
 
 async fn register_image(s: Stuff<'_>) -> Result<()> {
@@ -835,6 +918,15 @@ async fn main() -> Result<()> {
     opts.parsing_style(getopts::ParsingStyle::StopAtFirstFree);
 
     let f: Caller = match std::env::args().skip(1).next().as_deref() {
+        Some("start") => {
+            |s| Box::pin(start(s))
+        }
+        Some("stop") => {
+            |s| Box::pin(stop(s))
+        }
+        Some("info") => {
+            |s| Box::pin(info(s))
+        }
         Some("melbourne") => {
             opts.reqopt("t", "target", "target VM name", "NAME");
 
