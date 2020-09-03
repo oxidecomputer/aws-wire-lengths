@@ -34,7 +34,6 @@ use std::time::Duration;
 use std::pin::Pin;
 use std::future::Future;
 
-const BUCKET: &str = "oxide-disk-images-west";
 const S3_REGION: Region = Region::UsWest2;
 const EC2_REGION: Region = Region::UsWest2;
 
@@ -55,10 +54,12 @@ impl<T: Write> EventWriterExt for EventWriter<T> {
     }
 }
 
-async fn sign_delete(c: &dyn ProvideAwsCredentials, k: &str) -> Result<String> {
+async fn sign_delete(c: &dyn ProvideAwsCredentials, b: &str, k: &str)
+    -> Result<String>
+{
     let creds = c.credentials().await?;
     Ok(DeleteObjectRequest {
-        bucket: BUCKET.to_string(),
+        bucket: b.to_string(),
         key: k.to_string(),
         ..Default::default()
     }.get_presigned_url(&S3_REGION, &creds, &PreSignedRequestOption {
@@ -66,9 +67,11 @@ async fn sign_delete(c: &dyn ProvideAwsCredentials, k: &str) -> Result<String> {
     }))
 }
 
-async fn sign_head(c: &dyn ProvideAwsCredentials, k: &str) -> Result<String> {
+async fn sign_head(c: &dyn ProvideAwsCredentials, b: &str, k: &str)
+    -> Result<String>
+{
     let creds = c.credentials().await?;
-    let uri = format!("/{}/{}", BUCKET, k);
+    let uri = format!("/{}/{}", b, k);
     let mut req = SignedRequest::new("HEAD", "s3", &S3_REGION, &uri);
     let params = Params::new();
 
@@ -78,10 +81,12 @@ async fn sign_head(c: &dyn ProvideAwsCredentials, k: &str) -> Result<String> {
     Ok(req.generate_presigned_url(&creds, &expires_in, false))
 }
 
-async fn sign_get(c: &dyn ProvideAwsCredentials, k: &str) -> Result<String> {
+async fn sign_get(c: &dyn ProvideAwsCredentials, b: &str, k: &str)
+    -> Result<String>
+{
     let creds = c.credentials().await?;
     Ok(GetObjectRequest {
-        bucket: BUCKET.to_string(),
+        bucket: b.to_string(),
         key: k.to_string(),
         ..Default::default()
     }.get_presigned_url(&S3_REGION, &creds, &PreSignedRequestOption {
@@ -108,12 +113,12 @@ impl ImageSizes {
     }
 }
 
-async fn image_size(s3: &dyn S3, k: &str) -> Result<ImageSizes> {
+async fn image_size(s3: &dyn S3, b: &str, k: &str) -> Result<ImageSizes> {
     /*
      * Get size of uploaded object.
      */
     let ikh = s3.head_object(HeadObjectRequest {
-        bucket: BUCKET.to_string(),
+        bucket: b.to_string(),
         key: k.to_string(),
         ..Default::default()
     }).await?;
@@ -131,19 +136,20 @@ async fn image_size(s3: &dyn S3, k: &str) -> Result<ImageSizes> {
 
 async fn import_volume(s: Stuff<'_>) -> Result<()> {
     let pfx = s.args.opt_str("p").unwrap();
+    let bucket = s.args.opt_str("b").unwrap();
     let kimage = pfx.clone() + "/disk.raw";
     let kmanifest = pfx.clone() + "/manifest.xml";
 
-    let volid = i_import_volume(s, &kimage, &kmanifest).await?;
+    let volid = i_import_volume(s, &bucket, &kimage, &kmanifest).await?;
     println!("COMPLETED VOLUME ID: {}", volid);
 
     Ok(())
 }
 
-async fn i_import_volume(s: Stuff<'_>, kimage: &str, kmanifest: &str)
+async fn i_import_volume(s: Stuff<'_>, bkt: &str, kimage: &str, kmanifest: &str)
     -> Result<String>
 {
-    let sz = image_size(s.s3, kimage).await?;
+    let sz = image_size(s.s3, bkt, kimage).await?;
 
     /*
      * Upload raw:
@@ -165,7 +171,7 @@ async fn i_import_volume(s: Stuff<'_>, kimage: &str, kmanifest: &str)
     w.write(XmlEvent::end_element())?;
 
     w.simple_tag("self-destruct-url",
-        &sign_delete(s.credprov, kmanifest).await?)?;
+        &sign_delete(s.credprov, bkt, kmanifest).await?)?;
 
     w.write(XmlEvent::start_element("import"))?;
 
@@ -179,9 +185,9 @@ async fn i_import_volume(s: Stuff<'_>, kimage: &str, kmanifest: &str)
         .attr("end", &sz.end()))?;
     w.write(XmlEvent::end_element())?; /* byte-range */
     w.simple_tag("key", kimage)?;
-    w.simple_tag("head-url", &sign_head(s.credprov, kimage).await?)?;
-    w.simple_tag("get-url", &sign_get(s.credprov, kimage).await?)?;
-    w.simple_tag("delete-url", &sign_delete(s.credprov, kimage).await?)?;
+    w.simple_tag("head-url", &sign_head(s.credprov, bkt, kimage).await?)?;
+    w.simple_tag("get-url", &sign_get(s.credprov, bkt, kimage).await?)?;
+    w.simple_tag("delete-url", &sign_delete(s.credprov, bkt, kimage).await?)?;
     w.write(XmlEvent::end_element())?; /* part */
 
     w.write(XmlEvent::end_element())?; /* parts */
@@ -195,7 +201,7 @@ async fn i_import_volume(s: Stuff<'_>, kimage: &str, kmanifest: &str)
     println!("uploading -> {}", kmanifest);
 
     let req = PutObjectRequest {
-        bucket: BUCKET.to_string(),
+        bucket: bkt.to_string(),
         key: kmanifest.to_string(),
         body: Some(out.into()),
         ..Default::default()
@@ -207,7 +213,7 @@ async fn i_import_volume(s: Stuff<'_>, kimage: &str, kmanifest: &str)
     println!("importing volume...");
 
     let availability_zone = EC2_REGION.name().to_string() + "a";
-    let import_manifest_url = sign_get(s.credprov, &kmanifest).await?;
+    let import_manifest_url = sign_get(s.credprov, bkt, &kmanifest).await?;
     let res = s.ec2.import_volume(ImportVolumeRequest {
         availability_zone,
         dry_run: Some(false),
@@ -365,11 +371,12 @@ fn ss(s: &str) -> Option<String> {
 async fn everything(s: Stuff<'_>) -> Result<()> {
     let name = s.args.opt_str("n").unwrap();
     let pfx = s.args.opt_str("p").unwrap();
+    let bucket = s.args.opt_str("b").unwrap();
 
     let kimage = pfx.clone() + "/disk.raw";
     let kmanifest = pfx.clone() + "/manifest.xml";
 
-    let volid = i_import_volume(s, &kimage, &kmanifest).await?;
+    let volid = i_import_volume(s, &bucket, &kimage, &kmanifest).await?;
     println!("COMPLETED VOLUME ID: {}", volid);
 
     let snapid = i_create_snapshot(s, &volid).await?;
@@ -933,12 +940,14 @@ async fn main() -> Result<()> {
             |s| Box::pin(melbourne(s))
         }
         Some("everything") => {
+            opts.reqopt("b", "bucket", "S3 bucket", "BUCKET");
             opts.reqopt("p", "prefix", "S3 prefix", "PREFIX");
             opts.reqopt("n", "name", "target image name", "NAME");
 
             |s| Box::pin(everything(s))
         }
         Some("import-volume") => {
+            opts.reqopt("b", "bucket", "S3 bucket", "BUCKET");
             opts.reqopt("p", "prefix", "S3 prefix", "PREFIX");
 
             |s| Box::pin(import_volume(s))
