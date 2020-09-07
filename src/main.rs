@@ -34,6 +34,9 @@ use std::time::Duration;
 use std::pin::Pin;
 use std::future::Future;
 
+mod table;
+use table::{TableBuilder, Row};
+
 const S3_REGION: Region = Region::UsWest2;
 const EC2_REGION: Region = Region::UsWest2;
 
@@ -415,6 +418,7 @@ struct Instance {
     id: String,
     ip: String,
     state: String,
+    launch: String,
 }
 
 #[derive(Debug, Clone)]
@@ -666,6 +670,7 @@ async fn get_instance(s: &Stuff<'_>, lookup: InstanceLookup)
                     ip: inst.public_ip_address.as_deref().unwrap().to_string(),
                     state: inst.state.as_ref().unwrap()
                         .name.as_deref().unwrap().to_string(),
+                    launch: inst.launch_time.as_deref().unwrap().to_string(),
                 });
             }
         }
@@ -682,16 +687,98 @@ async fn get_instance(s: &Stuff<'_>, lookup: InstanceLookup)
     Ok(out.pop().unwrap())
 }
 
-async fn info(s: Stuff<'_>) -> Result<()> {
-    if s.args.free.len() != 1 {
-        bail!("expect the name of just one instance");
+async fn images(s: Stuff<'_>) -> Result<()> {
+    let mut t = TableBuilder::new()
+        .add_column("id", 21)
+        .add_column("name", 24)
+        .add_column("creation", 24)
+        .output_from_list(s.args.opt_str("o").as_deref())
+        .sort_from_list_desc(Some("creation"))
+        .sort_from_list_asc(s.args.opt_str("s").as_deref())
+        .sort_from_list_desc(s.args.opt_str("S").as_deref())
+        .disable_header(s.args.opt_present("H"))
+        .build();
+
+    let res = s.ec2.describe_images(ec2::DescribeImagesRequest {
+        owners: Some(vec!["self".to_string()]),
+        ..Default::default()
+    }).await?;
+
+    let x = Vec::new();
+    for i in res.images.as_ref().unwrap_or(&x) {
+        let mut r = Row::new();
+
+
+        r.add_str("id", i.image_id.as_deref().unwrap());
+        r.add_str("name", i.name.as_deref().unwrap_or("?"));
+        r.add_str("creation", i.creation_date.as_deref().unwrap_or("-"));
+
+        t.add_row(r);
     }
 
-    let i = get_instance(&s,
-        InstanceLookup::ByName(s.args.free.get(0).unwrap().to_string()))
-        .await?;
+    print!("{}", t.output()?);
 
-    println!("{:#?}", i);
+    Ok(())
+}
+
+async fn info(s: Stuff<'_>) -> Result<()> {
+    let mut t = TableBuilder::new()
+        .add_column("id", 19)
+        .add_column("name", 28)
+        .add_column("launch", 24)
+        .add_column("ip", 15)
+        .add_column("state", 16)
+        .output_from_list(s.args.opt_str("o").as_deref())
+        .sort_from_list_desc(Some("launch"))
+        .sort_from_list_asc(s.args.opt_str("s").as_deref())
+        .sort_from_list_desc(s.args.opt_str("S").as_deref())
+        .disable_header(s.args.opt_present("H"))
+        .build();
+
+    if !s.args.free.is_empty() {
+        for n in s.args.free.iter() {
+            let i = get_instance(&s, InstanceLookup::ByName(n.to_string()))
+                .await?;
+
+            let mut r = Row::new();
+            r.add_str("id", &i.id);
+            r.add_str("name", &i.name);
+            r.add_str("launch", &i.launch);
+            r.add_str("ip", &i.ip);
+            r.add_str("state", &i.state);
+            t.add_row(r);
+        }
+    } else {
+        let res = s.ec2.describe_instances(ec2::DescribeInstancesRequest {
+            ..Default::default()
+        }).await?;
+
+        if let Some(r) = &res.reservations {
+            for r in r.iter() {
+                if let Some(i) = &r.instances {
+                    for i in i.iter() {
+                        let empty = vec![];
+                        let tags = i.tags.as_ref().unwrap_or(&empty);
+                        let nametag = tags.iter()
+                            .find(|t| t.key.as_deref() == Some("Name"))
+                            .and_then(|t| t.value.as_deref());
+
+                        let mut r = Row::new();
+                        r.add_str("id", i.instance_id.as_deref().unwrap());
+                        r.add_str("name", nametag.unwrap_or("-"));
+                        r.add_str("launch", i.launch_time.as_deref().unwrap());
+                        r.add_str("ip",
+                            i.public_ip_address.as_deref().unwrap_or("-"));
+                        r.add_str("state", i.state.as_ref().unwrap()
+                            .name.as_deref().unwrap());
+                        t.add_row(r);
+                    }
+                }
+            }
+        }
+    }
+
+    print!("{}", t.output()?);
 
     Ok(())
 }
@@ -926,6 +1013,13 @@ async fn main() -> Result<()> {
     let mut opts = getopts::Options::new();
     opts.parsing_style(getopts::ParsingStyle::StopAtFirstFree);
 
+    fn tabular(opts: &mut getopts::Options) {
+        opts.optopt("s", "", "sort by columns (ascending)", "COLUMN,...");
+        opts.optopt("S", "", "sort by columns (descending)", "COLUMN,...");
+        opts.optopt("o", "", "select columns to display", "COLUMN,...");
+        opts.optflag("H", "", "omit header");
+    }
+
     let f: Caller = match std::env::args().skip(1).next().as_deref() {
         Some("start") => {
             |s| Box::pin(start(s))
@@ -934,7 +1028,14 @@ async fn main() -> Result<()> {
             |s| Box::pin(stop(s))
         }
         Some("info") => {
+            tabular(&mut opts);
+
             |s| Box::pin(info(s))
+        }
+        Some("images") => {
+            tabular(&mut opts);
+
+            |s| Box::pin(images(s))
         }
         Some("melbourne") => {
             opts.reqopt("t", "target", "target VM name", "NAME");

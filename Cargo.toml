@@ -4,6 +4,10 @@ version = "0.1.0"
 authors = ["Joshua M. Clulow <josh@sysmgr.org>"]
 edition = "2018"
 
+[features]
+default = ["vendored-openssl"]
+vendored-openssl = ['openssl/vendored']
+
 [dependencies]
 rusoto_core = "0.45.0"
 rusoto_ec2 = "0.45.0"
@@ -15,3 +19,10 @@ serde = { version = "1", features = ["derive"] }
 serde-xml-rs = "0.4"
 xml-rs = "0.8"
 getopts = "0.2"
+
+#
+# I believe it is necessary to pull this in here, so that we can demand the
+# static linking of the vendored OpenSSL.  We don't use it directly, but the
+# same version will then be used by reqwest.
+#
+openssl = { version = "0.10", optional = true }
