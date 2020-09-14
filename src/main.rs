@@ -728,6 +728,7 @@ async fn info(s: Stuff<'_>) -> Result<()> {
         .add_column("launch", 24)
         .add_column("ip", 15)
         .add_column("state", 16)
+        .output_from_list(Some("id,name,ip,state"))
         .output_from_list(s.args.opt_str("o").as_deref())
         .sort_from_list_desc(Some("launch"))
         .sort_from_list_asc(s.args.opt_str("s").as_deref())
