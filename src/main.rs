@@ -420,6 +420,10 @@ async fn everything(s: Stuff<'_>) -> Result<()> {
     let ami = i_register_image(s, &name, &snapid, support_ena).await?;
     println!("COMPLETED IMAGE ID: {}", ami);
 
+    /*
+     * XXX Should remove volume after registration?
+     */
+
     Ok(())
 }
 
