@@ -15,6 +15,7 @@ use ec2::{
     BlockDeviceMapping,
     EbsBlockDevice,
     DescribeImagesRequest,
+    Tag,
 };
 use rusoto_s3 as s3;
 use s3::{
@@ -39,6 +40,36 @@ use table::{TableBuilder, Row};
 
 const S3_REGION: Region = Region::UsWest2;
 const EC2_REGION: Region = Region::UsWest2;
+
+trait RowExt {
+    fn add_stror(&mut self, n: &str, v: &Option<String>, def: &str);
+}
+
+impl RowExt for Row {
+    fn add_stror(&mut self, n: &str, v: &Option<String>, def: &str) {
+        self.add_str(n, v.as_deref().unwrap_or(def));
+    }
+}
+
+trait TagExtractor {
+    fn tag(&self, n: &str) -> Option<String>;
+}
+
+impl TagExtractor for Option<Vec<Tag>> {
+    fn tag(&self, n: &str) -> Option<String> {
+        if let Some(tags) = self.as_ref() {
+            for tag in tags.iter() {
+                if let Some(k) = tag.key.as_deref() {
+                    if k == n {
+                        return tag.value.clone();
+                    }
+                }
+            }
+        }
+
+        None
+    }
+}
 
 trait EventWriterExt {
     fn simple_tag(&mut self, n: &str, v: &str) -> Result<()>;
@@ -414,9 +445,9 @@ enum VolumeLookup {
 
 #[derive(Debug)]
 struct Instance {
-    name: String,
+    name: Option<String>,
     id: String,
-    ip: String,
+    ip: Option<String>,
     state: String,
     launch: String,
 }
@@ -649,25 +680,22 @@ async fn get_instance(s: &Stuff<'_>, lookup: InstanceLookup)
             /*
              * Find the name tag value:
              */
-            let tags = inst.tags.as_ref().unwrap();
-            let nametag = tags.iter()
-                .find(|t| t.key.as_deref() == Some("Name"))
-                .and_then(|t| t.value.as_deref());
+            let nametag = inst.tags.tag("Name");
 
             let mat = match &lookup {
                 InstanceLookup::ById(id) => {
                     &id.as_str() == &inst.instance_id.as_deref().unwrap()
                 }
                 InstanceLookup::ByName(name) => {
-                    Some(name.as_str()) == nametag
+                    Some(name.as_str()) == nametag.as_deref()
                 }
             };
 
             if mat {
                 out.push(Instance {
-                    name: nametag.unwrap().to_string(),
+                    name: nametag,
                     id: inst.instance_id.as_deref().unwrap().to_string(),
-                    ip: inst.public_ip_address.as_deref().unwrap().to_string(),
+                    ip: inst.public_ip_address.clone(),
                     state: inst.state.as_ref().unwrap()
                         .name.as_deref().unwrap().to_string(),
                     launch: inst.launch_time.as_deref().unwrap().to_string(),
@@ -743,9 +771,9 @@ async fn info(s: Stuff<'_>) -> Result<()> {
 
             let mut r = Row::new();
             r.add_str("id", &i.id);
-            r.add_str("name", &i.name);
+            r.add_stror("name", &i.name, "-");
             r.add_str("launch", &i.launch);
-            r.add_str("ip", &i.ip);
+            r.add_stror("ip", &i.ip, "-");
             r.add_str("state", &i.state);
             t.add_row(r);
         }
@@ -758,20 +786,16 @@ async fn info(s: Stuff<'_>) -> Result<()> {
             for r in r.iter() {
                 if let Some(i) = &r.instances {
                     for i in i.iter() {
-                        let empty = vec![];
-                        let tags = i.tags.as_ref().unwrap_or(&empty);
-                        let nametag = tags.iter()
-                            .find(|t| t.key.as_deref() == Some("Name"))
-                            .and_then(|t| t.value.as_deref());
-
                         let mut r = Row::new();
+
                         r.add_str("id", i.instance_id.as_deref().unwrap());
-                        r.add_str("name", nametag.unwrap_or("-"));
+                        r.add_stror("name", &i.tags.tag("Name"), "-");
                         r.add_str("launch", i.launch_time.as_deref().unwrap());
                         r.add_str("ip",
                             i.public_ip_address.as_deref().unwrap_or("-"));
                         r.add_str("state", i.state.as_ref().unwrap()
                             .name.as_deref().unwrap());
+
                         t.add_row(r);
                     }
                 }
@@ -830,13 +854,17 @@ async fn melbourne(s: Stuff<'_>) -> Result<()> {
     let v_melbourne = get_volume(&s,
         VolumeLookup::ByName("melbourne".to_string())).await?;
 
+    if i_melbourne.name.is_none() || i_watson.name.is_none() {
+        bail!("instances must have names for this to work");
+    }
+
     println!("melbourne: {:?}", i_melbourne);
     println!("watson: {:?}", i_watson);
     println!("volume: {:?}", v_melbourne);
 
     if let Some(a) = &v_melbourne.attach {
         if a.instance_id == i_melbourne.id {
-            if target == i_melbourne.name {
+            if target == i_melbourne.name.as_deref().unwrap() {
                 println!("already attached to melbourne!");
                 return Ok(());
             }
@@ -848,7 +876,7 @@ async fn melbourne(s: Stuff<'_>) -> Result<()> {
             detach_volume(&s, &v_melbourne.id).await?;
 
         } else if a.instance_id == i_watson.id {
-            if target == i_watson.name {
+            if target == i_watson.name.as_deref().unwrap() {
                 println!("already attached to watson!");
                 return Ok(());
             } else {
