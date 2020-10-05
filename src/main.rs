@@ -720,6 +720,8 @@ async fn images(s: Stuff<'_>) -> Result<()> {
         .add_column("id", 21)
         .add_column("name", 24)
         .add_column("creation", 24)
+        .add_column("snapshots", 22)
+        .output_from_list(Some("id,name,creation"))
         .output_from_list(s.args.opt_str("o").as_deref())
         .sort_from_list_desc(Some("creation"))
         .sort_from_list_asc(s.args.opt_str("s").as_deref())
@@ -736,10 +738,33 @@ async fn images(s: Stuff<'_>) -> Result<()> {
     for i in res.images.as_ref().unwrap_or(&x) {
         let mut r = Row::new();
 
+        /*
+         * If we know which snapshot ID this image is based on, render it in
+         * the SNAPSHOTS column:
+         */
+        let snap = if let Some(bdm) = i.block_device_mappings.as_ref() {
+            let mut snaps: Vec<String> = Vec::new();
+            for bdm in bdm.iter() {
+                if let Some(ebs) = bdm.ebs.as_ref() {
+                    if let Some(sid) = ebs.snapshot_id.as_ref() {
+                        snaps.push(sid.to_string());
+                    }
+                }
+            }
+            if snaps.is_empty() {
+                "-".to_string()
+            } else {
+                snaps.sort();
+                snaps.join(",")
+            }
+        } else {
+            "-".to_string()
+        };
 
         r.add_str("id", i.image_id.as_deref().unwrap());
         r.add_str("name", i.name.as_deref().unwrap_or("?"));
         r.add_str("creation", i.creation_date.as_deref().unwrap_or("-"));
+        r.add_str("snapshots", &snap);
 
         t.add_row(r);
     }
