@@ -715,6 +715,116 @@ async fn get_instance(s: &Stuff<'_>, lookup: InstanceLookup)
     Ok(out.pop().unwrap())
 }
 
+async fn snapshots(s: Stuff<'_>) -> Result<()> {
+    let mut t = TableBuilder::new()
+        .add_column("id", 22)
+        .add_column("start", 24)
+        .add_column("state", 10)
+        .add_column("size", 5)
+        .add_column("volume", 22)
+        .add_column("desc", 30)
+        .output_from_list(Some("id,start,size,state,desc"))
+        .output_from_list(s.args.opt_str("o").as_deref())
+        .sort_from_list_desc(Some("start"))
+        .sort_from_list_asc(s.args.opt_str("s").as_deref())
+        .sort_from_list_desc(s.args.opt_str("S").as_deref())
+        .disable_header(s.args.opt_present("H"))
+        .build();
+
+    let res = s.ec2.describe_snapshots(ec2::DescribeSnapshotsRequest {
+        owner_ids: Some(vec!["self".to_string()]),
+        ..Default::default()
+    }).await?;
+
+    let x = Vec::new();
+    for s in res.snapshots.as_ref().unwrap_or(&x) {
+        let mut r = Row::new();
+
+        r.add_stror("id", &s.snapshot_id, "?");
+        r.add_stror("start", &s.start_time, "-");
+        r.add_stror("state", &s.state, "-");
+        r.add_u64("size", s.volume_size.unwrap_or(0) as u64);
+        r.add_stror("volume", &s.volume_id, "-");
+        r.add_stror("desc", &s.description, "-");
+
+        t.add_row(r);
+    }
+
+    print!("{}", t.output()?);
+
+    Ok(())
+}
+
+async fn volumes(s: Stuff<'_>) -> Result<()> {
+    let mut t = TableBuilder::new()
+        .add_column("id", 21)
+        .add_column("state", 10)
+        .add_column("size", 5)
+        .add_column("snapshot", 22)
+        .add_column("name", 24)
+        .add_column("info", 30)
+        .add_column("creation", 24)
+        .add_column("az", 12)
+        .add_column("natt", 4) /* Number of attachments */
+        .output_from_list(Some("id,state,natt,info"))
+        .output_from_list(s.args.opt_str("o").as_deref())
+        .sort_from_list_desc(Some("creation"))
+        .sort_from_list_asc(s.args.opt_str("s").as_deref())
+        .sort_from_list_desc(s.args.opt_str("S").as_deref())
+        .disable_header(s.args.opt_present("H"))
+        .build();
+
+    let res = s.ec2.describe_volumes(ec2::DescribeVolumesRequest {
+        ..Default::default()
+    }).await?;
+
+    let x = Vec::new();
+    for v in res.volumes.as_ref().unwrap_or(&x) {
+        let mut r = Row::new();
+
+        /*
+         * The magic INFO column contains information we were able to glean by
+         * looking further afield.
+         */
+        let atts = v.attachments.as_ref().unwrap();
+        let info = if atts.len() != 1 {
+            v.tags.tag("Name").as_deref().unwrap_or("-").to_string()
+        } else {
+            let a = atts.iter().next().unwrap();
+
+            if let Some(aid) = a.instance_id.as_deref() {
+                let ai = get_instance(&s,
+                    InstanceLookup::ById(aid.to_string())).await?;
+
+                if let Some(n) = ai.name.as_deref() {
+                    format!("A: {}", n)
+                } else {
+                    format!("A: {}", aid)
+                }
+            } else {
+                v.tags.tag("Name").as_deref().unwrap_or("-").to_string()
+            }
+        };
+
+        r.add_stror("id", &v.volume_id, "?");
+        r.add_str("info", &info);
+        r.add_stror("state", &v.state, "-");
+        r.add_u64("size", v.size.unwrap_or(0) as u64);
+        r.add_stror("snapshot", &v.snapshot_id, "-");
+        r.add_stror("name", &v.tags.tag("Name"), "-");
+        r.add_stror("creation", &v.create_time, "-");
+        r.add_stror("az", &v.availability_zone, "-");
+        r.add_u64("natt", atts.len() as u64);
+
+        t.add_row(r);
+    }
+
+    print!("{}", t.output()?);
+
+    Ok(())
+}
+
+
 async fn images(s: Stuff<'_>) -> Result<()> {
     let mut t = TableBuilder::new()
         .add_column("id", 21)
@@ -1085,6 +1195,16 @@ async fn main() -> Result<()> {
             tabular(&mut opts);
 
             |s| Box::pin(info(s))
+        }
+        Some("volumes") => {
+            tabular(&mut opts);
+
+            |s| Box::pin(volumes(s))
+        }
+        Some("snapshots") => {
+            tabular(&mut opts);
+
+            |s| Box::pin(snapshots(s))
         }
         Some("images") => {
             tabular(&mut opts);
