@@ -889,19 +889,22 @@ async fn images(s: Stuff<'_>) -> Result<()> {
 }
 
 async fn info(s: Stuff<'_>) -> Result<()> {
-    let mut t = TableBuilder::new()
-        .add_column("id", 19)
-        .add_column("name", 28)
-        .add_column("launch", 24)
-        .add_column("ip", 15)
-        .add_column("state", 16)
-        .output_from_list(Some("id,name,ip,state"))
-        .output_from_list(s.args.opt_str("o").as_deref())
-        .sort_from_list_desc(Some("launch"))
-        .sort_from_list_asc(s.args.opt_str("s").as_deref())
-        .sort_from_list_desc(s.args.opt_str("S").as_deref())
-        .disable_header(s.args.opt_present("H"))
-        .build();
+    let mut t = TableBuilder::new();
+    t.add_column("id", 19);
+    t.add_column("name", 28);
+    t.add_column("launch", 24);
+    t.add_column("ip", 15);
+    t.add_column("state", 16);
+    for tag in s.args.opt_strs("T") {
+        t.add_column(&tag, 20);
+    }
+    t.output_from_list(Some("id,name,ip,state"));
+    t.output_from_list(s.args.opt_str("o").as_deref());
+    t.sort_from_list_desc(Some("launch"));
+    t.sort_from_list_asc(s.args.opt_str("s").as_deref());
+    t.sort_from_list_desc(s.args.opt_str("S").as_deref());
+    t.disable_header(s.args.opt_present("H"));
+    let mut t = t.build();
 
     if !s.args.free.is_empty() {
         for n in s.args.free.iter() {
@@ -914,6 +917,9 @@ async fn info(s: Stuff<'_>) -> Result<()> {
             r.add_str("launch", &i.launch);
             r.add_stror("ip", &i.ip, "-");
             r.add_str("state", &i.state);
+            for tag in s.args.opt_strs("T") {
+                r.add_str(&tag, "-"); /* XXX */
+            }
             t.add_row(r);
         }
     } else {
@@ -934,6 +940,10 @@ async fn info(s: Stuff<'_>) -> Result<()> {
                             i.public_ip_address.as_deref().unwrap_or("-"));
                         r.add_str("state", i.state.as_ref().unwrap()
                             .name.as_deref().unwrap());
+
+                        for tag in s.args.opt_strs("T") {
+                            r.add_stror(&tag, &i.tags.tag(&tag), "-");
+                        }
 
                         t.add_row(r);
                     }
@@ -1197,6 +1207,7 @@ async fn main() -> Result<()> {
         }
         Some("info") => {
             tabular(&mut opts);
+            opts.optmulti("T", "", "specify a tag as an extra column", "TAG");
 
             |s| Box::pin(info(s))
         }
