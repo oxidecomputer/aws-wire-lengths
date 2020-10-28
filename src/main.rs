@@ -128,10 +128,11 @@ async fn sign_get(c: &dyn ProvideAwsCredentials, b: &str, k: &str)
         key: k.to_string(),
         ..Default::default()
     }.get_presigned_url(&S3_REGION, &creds, &PreSignedRequestOption {
-        expires_in: Duration::from_secs(3600)
+        expires_in: Duration::from_secs(300)
     }))
 }
 
+#[derive(Debug)]
 struct ImageSizes {
     bytes: i64,
     gb: i64,
@@ -188,6 +189,7 @@ async fn i_import_volume(s: Stuff<'_>, bkt: &str, kimage: &str, kmanifest: &str)
     -> Result<String>
 {
     let sz = image_size(s.s3, bkt, kimage).await?;
+    println!("  IMAGE SIZE: {:?}", sz);
 
     /*
      * Upload raw:
@@ -415,12 +417,15 @@ async fn everything(s: Stuff<'_>) -> Result<()> {
     let kimage = pfx.clone() + "/disk.raw";
     let kmanifest = pfx.clone() + "/manifest.xml";
 
+    println!("IMPORTING VOLUME:");
     let volid = i_import_volume(s, &bucket, &kimage, &kmanifest).await?;
     println!("COMPLETED VOLUME ID: {}", volid);
 
+    println!("CREATING SNAPSHOT:");
     let snapid = i_create_snapshot(s, &volid).await?;
     println!("COMPLETED SNAPSHOT ID: {}", snapid);
 
+    println!("REGISTERING IMAGE:");
     let ami = i_register_image(s, &name, &snapid, support_ena).await?;
     println!("COMPLETED IMAGE ID: {}", ami);
 
