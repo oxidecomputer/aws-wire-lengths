@@ -511,6 +511,7 @@ async fn start_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
     println!("starting instance {}...", id);
 
     let mut started = false;
+    let mut last_state = String::new();
 
     loop {
         let inst = get_instance(s, lookup.clone()).await?;
@@ -524,7 +525,10 @@ async fn start_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
                 return Ok(());
             }
             n => {
-                println!("    state is {}", n);
+                if last_state != n {
+                    println!("    state is {}", n);
+                    last_state = n.to_string();
+                }
                 n == "stopped"
             }
         };
@@ -549,6 +553,7 @@ async fn stop_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
     println!("stopping instance {}...", id);
 
     let mut stopped = false;
+    let mut last_state = String::new();
 
     loop {
         let inst = get_instance(s, lookup.clone()).await?;
@@ -559,7 +564,10 @@ async fn stop_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
                 return Ok(());
             }
             n => {
-                println!("    state is {}", n);
+                if last_state != n {
+                    println!("    state is {}", n);
+                    last_state = n.to_string();
+                }
                 n == "running"
             }
         };
@@ -572,6 +580,45 @@ async fn stop_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
             }).await?;
             println!("    {:#?}", res);
             stopped = true;
+        }
+
+        sleep(1000);
+    }
+}
+
+async fn destroy_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
+    let lookup = InstanceLookup::ById(id.to_string());
+
+    println!("destroying instance {}...", id);
+
+    let mut terminated = false;
+    let mut last_state = String::new();
+
+    loop {
+        let inst = get_instance(s, lookup.clone()).await?;
+
+        let shouldterminate = match inst.state.as_str() {
+            n @ "terminated" => {
+                println!("    state is {}; done!", n);
+                return Ok(());
+            }
+            n => {
+                if last_state != n {
+                    println!("    state is {}", n);
+                    last_state = n.to_string();
+                }
+                n != "shutting-down"
+            }
+        };
+
+        if shouldterminate && !terminated {
+            println!("    terminating...");
+            let res = s.ec2.terminate_instances(ec2::TerminateInstancesRequest {
+                instance_ids: vec![id.to_string()],
+                ..Default::default()
+            }).await?;
+            println!("    {:#?}", res);
+            terminated = true;
         }
 
         sleep(1000);
@@ -1004,6 +1051,24 @@ async fn stop(s: Stuff<'_>) -> Result<()> {
     Ok(())
 }
 
+async fn destroy(s: Stuff<'_>) -> Result<()> {
+    if s.args.free.len() != 1 {
+        bail!("expect the name of just one instance");
+    }
+
+    let i = get_instance(&s,
+        InstanceLookup::ByName(s.args.free.get(0).unwrap().to_string()))
+        .await?;
+
+    println!("destroying instance: {:?}", i);
+
+    destroy_instance(&s, &i.id).await?;
+
+    println!("all done!");
+
+    Ok(())
+}
+
 async fn melbourne(s: Stuff<'_>) -> Result<()> {
     let target = s.args.opt_str("t").unwrap();
 
@@ -1212,6 +1277,9 @@ async fn main() -> Result<()> {
         }
         Some("stop") => {
             |s| Box::pin(stop(s))
+        }
+        Some("destroy") => {
+            |s| Box::pin(destroy(s))
         }
         Some("info") => {
             tabular(&mut opts);
