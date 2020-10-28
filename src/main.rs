@@ -27,7 +27,11 @@ use s3::{
     DeleteObjectRequest,
 };
 use rusoto_s3::util::{PreSignedRequest, PreSignedRequestOption};
-use rusoto_credential::{DefaultCredentialsProvider, ProvideAwsCredentials};
+use rusoto_credential::{
+    EnvironmentProvider,
+    DefaultCredentialsProvider,
+    ProvideAwsCredentials
+};
 use anyhow::{anyhow, bail, Result};
 use xml::writer::{EventWriter, EmitterConfig, XmlEvent};
 use std::io::Write;
@@ -1175,7 +1179,7 @@ async fn i_register_image(s: Stuff<'_>, name: &str, snapid: &str, ena: bool)
 struct Stuff<'a> {
     s3: &'a dyn S3,
     ec2: &'a dyn Ec2,
-    credprov: &'a DefaultCredentialsProvider,
+    credprov: &'a dyn ProvideAwsCredentials,
     args: &'a getopts::Matches,
 }
 
@@ -1184,14 +1188,11 @@ type Caller<'a> = fn(Stuff<'a>)
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let credprov = DefaultCredentialsProvider::new()?;
-    let s3 = S3Client::new_with(HttpClient::new()?, credprov.clone(),
-        S3_REGION);
-    let ec2 = Ec2Client::new_with(HttpClient::new()?, credprov.clone(),
-        EC2_REGION);
+    let mut opts = getopts::Options::new();
 
     let mut opts = getopts::Options::new();
     opts.parsing_style(getopts::ParsingStyle::StopAtFirstFree);
+    opts.optflag("e", "", "use environment variables for credentials");
 
     fn tabular(opts: &mut getopts::Options) {
         opts.optopt("s", "", "sort by columns (ascending)", "COLUMN,...");
@@ -1265,10 +1266,34 @@ async fn main() -> Result<()> {
 
     let args = opts.parse(std::env::args().skip(2))?;
 
+    let credprov: Box<dyn ProvideAwsCredentials> = if args.opt_present("e") {
+        Box::new(EnvironmentProvider::default())
+    } else {
+        Box::new(DefaultCredentialsProvider::new()?)
+    };
+
+    let (s3, ec2) = if args.opt_present("e") {
+        let s3 = S3Client::new_with(HttpClient::new()?,
+            EnvironmentProvider::default(),
+            S3_REGION);
+        let ec2 = Ec2Client::new_with(HttpClient::new()?,
+            EnvironmentProvider::default(),
+            EC2_REGION);
+        (s3, ec2)
+    } else {
+        let s3 = S3Client::new_with(HttpClient::new()?,
+            DefaultCredentialsProvider::new()?,
+            S3_REGION);
+        let ec2 = Ec2Client::new_with(HttpClient::new()?,
+            DefaultCredentialsProvider::new()?,
+            EC2_REGION);
+        (s3, ec2)
+    };
+
     f(Stuff {
         s3: &s3,
         ec2: &ec2,
-        credprov: &credprov,
+        credprov: credprov.as_ref(),
         args: &args,
     }).await?;
 
