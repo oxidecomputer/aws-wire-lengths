@@ -895,6 +895,7 @@ async fn info(s: Stuff<'_>) -> Result<()> {
     t.add_column("launch", 24);
     t.add_column("ip", 15);
     t.add_column("state", 16);
+    t.add_column("type", 12);
     for tag in s.args.opt_strs("T") {
         t.add_column(&tag, 20);
     }
@@ -933,6 +934,7 @@ async fn info(s: Stuff<'_>) -> Result<()> {
                     for i in i.iter() {
                         let mut r = Row::new();
 
+                        r.add_stror("type", &i.instance_type, "-");
                         r.add_str("id", i.instance_id.as_deref().unwrap());
                         r.add_stror("name", &i.tags.tag("Name"), "-");
                         r.add_str("launch", i.launch_time.as_deref().unwrap());
