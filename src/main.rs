@@ -990,12 +990,14 @@ async fn info(s: Stuff<'_>) -> Result<()> {
                     for i in i.iter() {
                         let mut r = Row::new();
 
+                        let pubip = i.public_ip_address.as_deref();
+                        let privip = i.private_ip_address.as_deref();
+
                         r.add_stror("type", &i.instance_type, "-");
                         r.add_str("id", i.instance_id.as_deref().unwrap());
                         r.add_stror("name", &i.tags.tag("Name"), "-");
                         r.add_str("launch", i.launch_time.as_deref().unwrap());
-                        r.add_str("ip",
-                            i.public_ip_address.as_deref().unwrap_or("-"));
+                        r.add_str("ip", pubip.unwrap_or(privip.unwrap_or("-")));
                         r.add_str("state", i.state.as_ref().unwrap()
                             .name.as_deref().unwrap());
 
