@@ -586,6 +586,23 @@ async fn stop_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
     }
 }
 
+async fn protect_instance(s: &Stuff<'_>, id: &str, prot: bool) -> Result<()> {
+    println!("setting protect to {} on instance {}...", prot, id);
+
+    let val = ec2::AttributeBooleanValue {
+        value: Some(prot),
+    };
+
+    let res = s.ec2.modify_instance_attribute(
+        ec2::ModifyInstanceAttributeRequest {
+            instance_id: id.to_string(),
+            disable_api_termination: Some(val),
+            ..Default::default()
+        }).await?;
+
+    Ok(())
+}
+
 async fn destroy_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
     let lookup = InstanceLookup::ById(id.to_string());
 
@@ -1053,6 +1070,28 @@ async fn stop(s: Stuff<'_>) -> Result<()> {
     Ok(())
 }
 
+async fn protect(s: Stuff<'_>, protect: bool) -> Result<()> {
+    if s.args.free.len() != 1 {
+        bail!("expect the name of just one instance");
+    }
+
+    let i = get_instance(&s,
+        InstanceLookup::ByName(s.args.free.get(0).unwrap().to_string()))
+        .await?;
+
+    if protect {
+        println!("protecting instance: {:?}", i);
+    } else {
+        println!("unprotecting instance: {:?}", i);
+    }
+
+    protect_instance(&s, &i.id, protect).await?;
+
+    println!("all done!");
+
+    Ok(())
+}
+
 async fn destroy(s: Stuff<'_>) -> Result<()> {
     if s.args.free.len() != 1 {
         bail!("expect the name of just one instance");
@@ -1279,6 +1318,12 @@ async fn main() -> Result<()> {
         }
         Some("stop") => {
             |s| Box::pin(stop(s))
+        }
+        Some("protect") => {
+            |s| Box::pin(protect(s, true))
+        }
+        Some("unprotect") => {
+            |s| Box::pin(protect(s, false))
         }
         Some("destroy") => {
             |s| Box::pin(destroy(s))
