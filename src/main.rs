@@ -727,6 +727,18 @@ async fn get_volume(s: &Stuff<'_>, lookup: VolumeLookup)
     Ok(out.pop().unwrap())
 }
 
+async fn get_instance_fuzzy(s: &Stuff<'_>, lookuparg: &str)
+    -> Result<Instance>
+{
+    let lookup = if lookuparg.starts_with("i-") {
+        InstanceLookup::ById(lookuparg.to_string())
+    } else {
+        InstanceLookup::ByName(lookuparg.to_string())
+    };
+
+    Ok(get_instance(s, lookup).await?)
+}
+
 async fn get_instance(s: &Stuff<'_>, lookup: InstanceLookup)
     -> Result<Instance>
 {
@@ -982,8 +994,7 @@ async fn info(s: Stuff<'_>) -> Result<()> {
 
     if !s.args.free.is_empty() {
         for n in s.args.free.iter() {
-            let i = get_instance(&s, InstanceLookup::ByName(n.to_string()))
-                .await?;
+            let i = get_instance_fuzzy(&s, n).await?;
 
             let mut r = Row::new();
             r.add_str("id", &i.id);
@@ -1039,9 +1050,7 @@ async fn start(s: Stuff<'_>) -> Result<()> {
         bail!("expect the name of just one instance");
     }
 
-    let i = get_instance(&s,
-        InstanceLookup::ByName(s.args.free.get(0).unwrap().to_string()))
-        .await?;
+    let i = get_instance_fuzzy(&s, s.args.free.get(0).unwrap()).await?;
 
     println!("starting instance: {:?}", i);
 
@@ -1057,9 +1066,7 @@ async fn stop(s: Stuff<'_>) -> Result<()> {
         bail!("expect the name of just one instance");
     }
 
-    let i = get_instance(&s,
-        InstanceLookup::ByName(s.args.free.get(0).unwrap().to_string()))
-        .await?;
+    let i = get_instance_fuzzy(&s, s.args.free.get(0).unwrap()).await?;
 
     println!("stopping instance: {:?}", i);
 
@@ -1075,9 +1082,7 @@ async fn protect(s: Stuff<'_>, protect: bool) -> Result<()> {
         bail!("expect the name of just one instance");
     }
 
-    let i = get_instance(&s,
-        InstanceLookup::ByName(s.args.free.get(0).unwrap().to_string()))
-        .await?;
+    let i = get_instance_fuzzy(&s, s.args.free.get(0).unwrap()).await?;
 
     if protect {
         println!("protecting instance: {:?}", i);
@@ -1097,9 +1102,7 @@ async fn destroy(s: Stuff<'_>) -> Result<()> {
         bail!("expect the name of just one instance");
     }
 
-    let i = get_instance(&s,
-        InstanceLookup::ByName(s.args.free.get(0).unwrap().to_string()))
-        .await?;
+    let i = get_instance_fuzzy(&s, s.args.free.get(0).unwrap()).await?;
 
     println!("destroying instance: {:?}", i);
 
