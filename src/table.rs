@@ -240,6 +240,7 @@ impl TableBuilder {
     /**
      * Decide whether to render a header at the top of the table or not.
      */
+    #[allow(dead_code)]
     pub fn show_header(&mut self, show: bool)
         -> &mut TableBuilder
     {

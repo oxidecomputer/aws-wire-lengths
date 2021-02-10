@@ -19,6 +19,10 @@ serde = { version = "1", features = ["derive"] }
 serde-xml-rs = "0.4"
 xml-rs = "0.8"
 getopts = "0.2"
+bytes = "1"
+futures = "0.3"
+tokio-util = { version = "0.6", features = [ "io", "codec" ] }
+rand = "0.8"
 
 #
 # I believe it is necessary to pull this in here, so that we can demand the

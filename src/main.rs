@@ -25,6 +25,11 @@ use s3::{
     GetObjectRequest,
     PutObjectRequest,
     DeleteObjectRequest,
+    UploadPartRequest,
+    CreateMultipartUploadRequest,
+    CompleteMultipartUploadRequest,
+    CompletedMultipartUpload,
+    CompletedPart,
 };
 use rusoto_s3::util::{PreSignedRequest, PreSignedRequestOption};
 use rusoto_credential::{
@@ -34,10 +39,14 @@ use rusoto_credential::{
 };
 use anyhow::{anyhow, bail, Result};
 use xml::writer::{EventWriter, EmitterConfig, XmlEvent};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::time::Duration;
 use std::pin::Pin;
 use std::future::Future;
+use std::fs::File;
+use bytes::BytesMut;
+use rand::{thread_rng, Rng};
+use rand::distributions::Alphanumeric;
 
 mod table;
 use table::{TableBuilder, Row};
@@ -130,6 +139,84 @@ async fn sign_get(c: &dyn ProvideAwsCredentials, b: &str, k: &str)
     }.get_presigned_url(&S3_REGION, &creds, &PreSignedRequestOption {
         expires_in: Duration::from_secs(300)
     }))
+}
+
+async fn put_object(s: Stuff<'_>) -> Result<()> {
+    let bucket = s.args.opt_str("b").unwrap();
+    let object = s.args.opt_str("o").unwrap();
+    let file = s.args.opt_str("f").unwrap();
+
+    i_put_object(s, &bucket, &object, &file).await?;
+    Ok(())
+}
+
+async fn i_put_object(s: Stuff<'_>, bucket: &str, object: &str, file: &str)
+    -> Result<()>
+{
+    let mut f = File::open(&file)?;
+
+    let res = s.s3.create_multipart_upload(CreateMultipartUploadRequest {
+        bucket: bucket.to_string(),
+        key: object.to_string(),
+        ..Default::default()
+    }).await?;
+    let upload_id = res.upload_id.as_deref().unwrap();
+
+    println!("upload ID {} ...", upload_id);
+
+    let mut total_size = 0;
+    let mut parts = Vec::new();
+    loop {
+        let mut buf = BytesMut::with_capacity(5 * 1024 * 1024);
+        buf.resize(5 * 1024 * 1024, 0);
+        let sz = f.read(&mut buf)?;
+        if sz == 0 {
+            break;
+        }
+
+        let part_number = (parts.len() + 1) as i64;
+        println!("part {} size {}", part_number, sz);
+        total_size += sz;
+
+        /*
+         * This was most tedious to work out:
+         */
+        let froz = buf.split_to(sz).freeze();
+        let se = futures::stream::once(async { Ok(froz) });
+        let body = Some(rusoto_s3::StreamingBody::new(se));
+
+        let res = s.s3.upload_part(UploadPartRequest {
+            body,
+            content_length: Some(sz as i64),
+            upload_id: upload_id.to_string(),
+            key: object.to_string(),
+            bucket: bucket.to_string(),
+            part_number,
+            ..Default::default()
+        }).await?;
+
+        let etag = res.e_tag.expect("etag");
+        println!("    part {} etag {}", part_number, etag);
+        parts.push(CompletedPart {
+            part_number: Some(part_number),
+            e_tag: Some(etag)
+        });
+    }
+
+    println!("uploaded {} chunks, total size {}", parts.len(), total_size);
+
+    s.s3.complete_multipart_upload(CompleteMultipartUploadRequest {
+        bucket: bucket.to_string(),
+        key: object.to_string(),
+        upload_id: upload_id.to_string(),
+        multipart_upload: Some(CompletedMultipartUpload {
+            parts: Some(parts),
+        }),
+        ..Default::default()
+    }).await?;
+
+    println!("upload ok!");
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -408,14 +495,31 @@ fn ss(s: &str) -> Option<String> {
     Some(s.to_string())
 }
 
+pub fn genkey(len: usize) -> String {
+    thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(len)
+        .map(|c| c as char)
+        .collect()
+}
+
 async fn everything(s: Stuff<'_>) -> Result<()> {
     let name = s.args.opt_str("n").unwrap();
-    let pfx = s.args.opt_str("p").unwrap();
+    let pfx = if let Some(pfx) = s.args.opt_str("p") {
+        pfx
+    } else {
+        genkey(64)
+    };
     let bucket = s.args.opt_str("b").unwrap();
+    let file = s.args.opt_str("f").unwrap();
     let support_ena = s.args.opt_present("E");
 
     let kimage = pfx.clone() + "/disk.raw";
     let kmanifest = pfx.clone() + "/manifest.xml";
+
+    println!("UPLOADING DISK TO S3 AS: {}", kimage);
+    i_put_object(s, &bucket, &kimage, &file).await?;
+    println!("COMPLETED UPLOAD");
 
     println!("IMPORTING VOLUME:");
     let volid = i_import_volume(s, &bucket, &kimage, &kmanifest).await?;
@@ -593,7 +697,7 @@ async fn protect_instance(s: &Stuff<'_>, id: &str, prot: bool) -> Result<()> {
         value: Some(prot),
     };
 
-    let res = s.ec2.modify_instance_attribute(
+    s.ec2.modify_instance_attribute(
         ec2::ModifyInstanceAttributeRequest {
             instance_id: id.to_string(),
             disable_api_termination: Some(val),
@@ -1303,8 +1407,6 @@ type Caller<'a> = fn(Stuff<'a>)
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut opts = getopts::Options::new();
-
-    let mut opts = getopts::Options::new();
     opts.parsing_style(getopts::ParsingStyle::StopAtFirstFree);
     opts.optflag("e", "", "use environment variables for credentials");
 
@@ -1359,11 +1461,19 @@ async fn main() -> Result<()> {
         }
         Some("everything") => {
             opts.reqopt("b", "bucket", "S3 bucket", "BUCKET");
-            opts.reqopt("p", "prefix", "S3 prefix", "PREFIX");
+            opts.optopt("p", "prefix", "S3 prefix", "PREFIX");
             opts.reqopt("n", "name", "target image name", "NAME");
             opts.optflag("E", "ena", "enable ENA support");
+            opts.reqopt("f", "file", "local file to upload", "FILENAME");
 
             |s| Box::pin(everything(s))
+        }
+        Some("put-object") => {
+            opts.reqopt("b", "bucket", "S3 bucket", "BUCKET");
+            opts.reqopt("o", "object", "S3 object name", "OBJECT");
+            opts.reqopt("f", "file", "local file to upload", "FILENAME");
+
+            |s| Box::pin(put_object(s))
         }
         Some("import-volume") => {
             opts.reqopt("b", "bucket", "S3 bucket", "BUCKET");

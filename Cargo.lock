@@ -28,8 +28,11 @@ name = "aws-wire-lengths"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
+ "futures",
  "getopts",
  "openssl",
+ "rand",
  "rusoto_core",
  "rusoto_credential",
  "rusoto_ec2",
@@ -37,6 +40,7 @@ dependencies = [
  "serde",
  "serde-xml-rs",
  "tokio",
+ "tokio-util",
  "xml-rs",
 ]
 
@@ -1306,6 +1310,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f7d995660bd2b7f8c1568414c1126076c13fbb725c40112dc0120b78eb9b717b"
 dependencies = [
  "native-tls",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-util"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebb7cb2f00c5ae8df755b252306272cd1790d39728363936e01827e11f0b017b"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "futures-sink",
+ "log",
+ "pin-project-lite",
  "tokio",
 ]
 
