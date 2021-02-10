@@ -321,7 +321,7 @@ async fn i_import_volume(s: Stuff<'_>, bkt: &str, kimage: &str, kmanifest: &str)
     w.write(XmlEvent::end_element())?; /* import */
     w.write(XmlEvent::end_element())?; /* manifest */
 
-    out.write(b"\n")?;
+    out.write_all(b"\n")?;
 
     println!("{}", String::from_utf8(out.clone())?);
 
@@ -381,7 +381,7 @@ async fn i_import_volume(s: Stuff<'_>, bkt: &str, kimage: &str, kmanifest: &str)
 
         let res = s.ec2.describe_conversion_tasks(dct).await?;
 
-        let mut v = res.conversion_tasks.ok_or(anyhow!("no ct"))?;
+        let mut v = res.conversion_tasks.ok_or_else(|| anyhow!("no ct"))?;
 
         if v.len() != 1 {
             println!("got {} tasks?!", v.len());
@@ -414,7 +414,6 @@ async fn i_import_volume(s: Stuff<'_>, bkt: &str, kimage: &str, kmanifest: &str)
         if let Some(state) = &ct.state {
             if state != "active" && state != "pending" {
                 println!("state is now \"{}\"; exiting loop", state);
-                drop(ct);
                 assert_eq!(v.len(), 1);
                 break v.pop();
             }
@@ -782,7 +781,7 @@ async fn get_volume(s: &Stuff<'_>, lookup: VolumeLookup)
 
         let mat = match &lookup {
             VolumeLookup::ById(id) => {
-                &id.as_str() == &vol.volume_id.as_deref().unwrap()
+                id.as_str() == vol.volume_id.as_deref().unwrap()
             }
             VolumeLookup::ByName(name) => {
                 Some(name.as_str()) == nametag
@@ -877,7 +876,7 @@ async fn get_instance(s: &Stuff<'_>, lookup: InstanceLookup)
 
             let mat = match &lookup {
                 InstanceLookup::ById(id) => {
-                    &id.as_str() == &inst.instance_id.as_deref().unwrap()
+                    id.as_str() == inst.instance_id.as_deref().unwrap()
                 }
                 InstanceLookup::ByName(name) => {
                     Some(name.as_str()) == nametag.as_deref()
@@ -1417,7 +1416,7 @@ async fn main() -> Result<()> {
         opts.optflag("H", "", "omit header");
     }
 
-    let f: Caller = match std::env::args().skip(1).next().as_deref() {
+    let f: Caller = match std::env::args().nth(1).as_deref() {
         Some("start") => {
             |s| Box::pin(start(s))
         }

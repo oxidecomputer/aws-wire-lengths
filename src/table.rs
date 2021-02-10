@@ -124,7 +124,7 @@ impl Table {
                 let val = row.data.get(&col.name).expect("output value");
 
                 let data = match val {
-                    Value::S(s) => format!("{}", s),
+                    Value::S(s) => s.to_string(),
                     Value::U(n) => format!("{}", n),
                 };
 
