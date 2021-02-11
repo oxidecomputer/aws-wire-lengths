@@ -1076,6 +1076,21 @@ async fn images(s: Stuff<'_>) -> Result<()> {
     Ok(())
 }
 
+async fn ip(s: Stuff<'_>) -> Result<()> {
+    if s.args.free.len() != 1 {
+        bail!("specify just one instance");
+    }
+    let n = s.args.free[0].as_str();
+
+    let i = get_instance_fuzzy(&s, n).await?;
+    if let Some(ip) = i.ip {
+        println!("{}", ip);
+        Ok(())
+    } else {
+        bail!("no IP address for instance {} ({})", n, i.id);
+    }
+}
+
 async fn info(s: Stuff<'_>) -> Result<()> {
     let mut t = TableBuilder::new();
     t.add_column("id", 19);
@@ -1431,6 +1446,9 @@ async fn main() -> Result<()> {
         }
         Some("destroy") => {
             |s| Box::pin(destroy(s))
+        }
+        Some("ip") => {
+            |s| Box::pin(ip(s))
         }
         Some("info") => {
             tabular(&mut opts);
