@@ -1423,6 +1423,7 @@ async fn main() -> Result<()> {
     let mut opts = getopts::Options::new();
     opts.parsing_style(getopts::ParsingStyle::StopAtFirstFree);
     opts.optflag("e", "", "use environment variables for credentials");
+    opts.optflag("", "help", "print usage");
 
     fn tabular(opts: &mut getopts::Options) {
         opts.optopt("s", "", "sort by columns (ascending)", "COLUMN,...");
@@ -1515,6 +1516,14 @@ async fn main() -> Result<()> {
     };
 
     let args = opts.parse(std::env::args().skip(2))?;
+
+    if args.opt_present("help") {
+        let prog = std::env::args().nth(0).as_deref().unwrap().to_string();
+        let cmd = std::env::args().nth(1).as_deref().unwrap().to_string();
+        let u = opts.usage(&format!("usage: {} {} OPTIONS", prog, cmd));
+        println!("{}", u);
+        std::process::exit(0);
+    }
 
     let credprov: Box<dyn ProvideAwsCredentials> = if args.opt_present("e") {
         Box::new(EnvironmentProvider::default())
