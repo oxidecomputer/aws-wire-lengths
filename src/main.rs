@@ -16,6 +16,9 @@ use ec2::{
     EbsBlockDevice,
     DescribeImagesRequest,
     Tag,
+    RunInstancesRequest,
+    TagSpecification,
+    InstanceNetworkInterfaceSpecification,
 };
 use rusoto_s3 as s3;
 use s3::{
@@ -44,6 +47,7 @@ use std::time::Duration;
 use std::pin::Pin;
 use std::future::Future;
 use std::fs::File;
+use std::collections::HashMap;
 use bytes::BytesMut;
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
@@ -500,6 +504,134 @@ pub fn genkey(len: usize) -> String {
         .take(len)
         .map(|c| c as char)
         .collect()
+}
+
+struct InstanceOptions {
+    ami_id: String,
+    type_name: String,
+    key_name: String,
+    tags: HashMap<String, String>,
+    root_size_gb: u32,
+    subnet_id: String,
+    sg_id: String,
+    user_data: Option<String>,
+}
+
+async fn i_create_instance(s: Stuff<'_>, io: &InstanceOptions)
+    -> Result<String>
+{
+    let tag_specifications = if !io.tags.is_empty() {
+        let mut tags = Vec::new();
+        for (k, v) in io.tags.iter() {
+            tags.push(Tag {
+                key: ss(k.as_str()),
+                value: ss(v.as_str()),
+            });
+        }
+        Some(vec![TagSpecification {
+            resource_type: ss("instance"),
+            tags: Some(tags),
+        }])
+    } else {
+        None
+    };
+
+    let rir = RunInstancesRequest {
+        image_id: ss(&io.ami_id),
+        instance_type: ss(&io.type_name),
+        key_name: ss(&io.key_name),
+        min_count: 1,
+        max_count: 1,
+        tag_specifications,
+        block_device_mappings: Some(vec![
+            BlockDeviceMapping {
+                device_name: ss("/dev/sda1"),
+                ebs: Some(EbsBlockDevice {
+                    volume_size: Some(io.root_size_gb as i64),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        ]),
+        network_interfaces: Some(vec![
+            InstanceNetworkInterfaceSpecification {
+                device_index: Some(0),
+                subnet_id: ss(&io.subnet_id),
+                groups: Some(vec![
+                    io.sg_id.to_string(),
+                ]),
+                ..Default::default()
+            },
+        ]),
+        user_data: io.user_data.as_deref().map(base64::encode),
+        ..Default::default()
+    };
+
+    let res = s.ec2.run_instances(rir).await?;
+    let mut ids = Vec::new();
+    if let Some(insts) = &res.instances {
+        for i in insts.iter() {
+            ids.push(i.instance_id.as_deref().unwrap().to_string());
+        }
+    }
+
+    if ids.len() != 1 {
+        bail!("wanted one instance, got {:?}", ids);
+    } else {
+        Ok(ids[0].to_string())
+    }
+}
+
+async fn create_instance(s: Stuff<'_>) -> Result<()> {
+    /*
+     * If an instance defaults file was provided, load it now:
+     */
+    let defs: HashMap<String, String> = if let Some(p) = s.args.opt_str("f") {
+        let mut f = File::open(&p)?;
+        let mut buf = Vec::<u8>::new();
+        f.read_to_end(&mut buf)?;
+        toml::from_slice(buf.as_slice())?
+    } else {
+        HashMap::new()
+    };
+
+    let fetchopt = |n: &str| -> Option<String> {
+        if let Some(v) = s.args.opt_str(n) {
+            Some(v)
+        } else if let Some(v) = defs.get(n) {
+            Some(v.to_string())
+        } else {
+            None
+        }
+    };
+    let fetch = |n: &str| -> Result<String> {
+        fetchopt(n).ok_or_else(|| anyhow!("must specify option \"{}\"", n))
+    };
+    let fetch_u32 = |n: &str| -> Result<u32> {
+        Ok(fetchopt(n)
+            .ok_or_else(|| anyhow!("must specify option \"{}\"", n))?
+            .parse::<u32>()
+            .map_err(|e| anyhow!("option \"{}\" must be a u32: {:?}", n, e))?)
+    };
+
+    let mut tags = HashMap::new();
+    tags.insert("Name".to_string(), fetch("name")?);
+
+    let io = InstanceOptions {
+        ami_id: fetch("image")?,
+        type_name: fetch("type")?,
+        key_name: fetch("key")?,
+        tags,
+        root_size_gb: fetch_u32("disksize")?,
+        subnet_id: fetch("subnet")?,
+        sg_id: fetch("sg")?,
+        user_data: fetchopt("userdata"),
+    };
+
+    let id = i_create_instance(s, &io).await?;
+    println!("CREATED INSTANCE {}", id);
+
+    Ok(())
 }
 
 async fn everything(s: Stuff<'_>) -> Result<()> {
@@ -1476,6 +1608,19 @@ async fn main() -> Result<()> {
             opts.reqopt("t", "target", "target VM name", "NAME");
 
             |s| Box::pin(melbourne(s))
+        }
+        Some("create") => {
+            opts.optopt("n", "name", "instance name", "NAME");
+            opts.optopt("i", "image", "image (AMI)", "AMI_ID");
+            opts.optopt("t", "type", "instance type", "TYPE");
+            opts.optopt("k", "key", "SSH key name", "KEY_NAME");
+            opts.optopt("s", "sg", "security group ID", "SG_ID");
+            opts.optopt("S", "subnet", "subnet ID", "SUBNET_ID");
+            opts.optopt("u", "userdata", "userdata (in plain text)", "DATA");
+            opts.optopt("d", "disksize", "root disk size (GB)", "GIGABYTES");
+            opts.optopt("f", "file", "defaults TOML file to use", "PATH");
+
+            |s| Box::pin(create_instance(s))
         }
         Some("everything") => {
             opts.reqopt("b", "bucket", "S3 bucket", "BUCKET");
