@@ -522,6 +522,7 @@ struct InstanceOptions {
     subnet_id: String,
     sg_id: String,
     user_data: Option<String>,
+    public_ip: Option<bool>,
 }
 
 async fn i_create_instance(s: Stuff<'_>, io: &InstanceOptions)
@@ -567,6 +568,7 @@ async fn i_create_instance(s: Stuff<'_>, io: &InstanceOptions)
                 groups: Some(vec![
                     io.sg_id.to_string(),
                 ]),
+                associate_public_ip_address: io.public_ip,
                 ..Default::default()
             },
         ]),
@@ -624,6 +626,12 @@ async fn create_instance(s: Stuff<'_>) -> Result<()> {
     let mut tags = HashMap::new();
     tags.insert("Name".to_string(), fetch("name")?);
 
+    let public_ip = if s.args.opt_present("p") {
+        Some(true)
+    } else {
+        None
+    };
+
     let io = InstanceOptions {
         ami_id: fetch("image")?,
         type_name: fetch("type")?,
@@ -633,6 +641,7 @@ async fn create_instance(s: Stuff<'_>) -> Result<()> {
         subnet_id: fetch("subnet")?,
         sg_id: fetch("sg")?,
         user_data: fetchopt("userdata"),
+        public_ip,
     };
 
     let id = i_create_instance(s, &io).await?;
@@ -1641,6 +1650,7 @@ async fn main() -> Result<()> {
             opts.optopt("u", "userdata", "userdata (in plain text)", "DATA");
             opts.optopt("d", "disksize", "root disk size (GB)", "GIGABYTES");
             opts.optopt("f", "file", "defaults TOML file to use", "PATH");
+            opts.optflag("p", "public-ip", "request a public IP");
 
             |s| Box::pin(create_instance(s))
         }
