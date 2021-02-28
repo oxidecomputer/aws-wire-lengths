@@ -40,7 +40,7 @@ use rusoto_credential::{
     DefaultCredentialsProvider,
     ProvideAwsCredentials
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Result, Context};
 use xml::writer::{EventWriter, EmitterConfig, XmlEvent};
 use std::io::{Read, Write};
 use std::time::Duration;
@@ -51,12 +51,10 @@ use std::collections::HashMap;
 use bytes::BytesMut;
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
+use std::str::FromStr;
 
 mod table;
 use table::{TableBuilder, Row};
-
-const S3_REGION: Region = Region::UsWest2;
-const EC2_REGION: Region = Region::UsWest2;
 
 trait RowExt {
     fn add_stror(&mut self, n: &str, v: &Option<String>, def: &str);
@@ -105,7 +103,8 @@ impl<T: Write> EventWriterExt for EventWriter<T> {
     }
 }
 
-async fn sign_delete(c: &dyn ProvideAwsCredentials, b: &str, k: &str)
+async fn sign_delete(c: &dyn ProvideAwsCredentials, r: &Region, b: &str,
+    k: &str)
     -> Result<String>
 {
     let creds = c.credentials().await?;
@@ -113,17 +112,17 @@ async fn sign_delete(c: &dyn ProvideAwsCredentials, b: &str, k: &str)
         bucket: b.to_string(),
         key: k.to_string(),
         ..Default::default()
-    }.get_presigned_url(&S3_REGION, &creds, &PreSignedRequestOption {
+    }.get_presigned_url(r, &creds, &PreSignedRequestOption {
         expires_in: Duration::from_secs(3600)
     }))
 }
 
-async fn sign_head(c: &dyn ProvideAwsCredentials, b: &str, k: &str)
+async fn sign_head(c: &dyn ProvideAwsCredentials, r: &Region, b: &str, k: &str)
     -> Result<String>
 {
     let creds = c.credentials().await?;
     let uri = format!("/{}/{}", b, k);
-    let mut req = SignedRequest::new("HEAD", "s3", &S3_REGION, &uri);
+    let mut req = SignedRequest::new("HEAD", "s3", r, &uri);
     let params = Params::new();
 
     let expires_in = Duration::from_secs(3600);
@@ -132,7 +131,7 @@ async fn sign_head(c: &dyn ProvideAwsCredentials, b: &str, k: &str)
     Ok(req.generate_presigned_url(&creds, &expires_in, false))
 }
 
-async fn sign_get(c: &dyn ProvideAwsCredentials, b: &str, k: &str)
+async fn sign_get(c: &dyn ProvideAwsCredentials, r: &Region, b: &str, k: &str)
     -> Result<String>
 {
     let creds = c.credentials().await?;
@@ -140,7 +139,7 @@ async fn sign_get(c: &dyn ProvideAwsCredentials, b: &str, k: &str)
         bucket: b.to_string(),
         key: k.to_string(),
         ..Default::default()
-    }.get_presigned_url(&S3_REGION, &creds, &PreSignedRequestOption {
+    }.get_presigned_url(r, &creds, &PreSignedRequestOption {
         expires_in: Duration::from_secs(300)
     }))
 }
@@ -302,7 +301,7 @@ async fn i_import_volume(s: Stuff<'_>, bkt: &str, kimage: &str, kmanifest: &str)
     w.write(XmlEvent::end_element())?;
 
     w.simple_tag("self-destruct-url",
-        &sign_delete(s.credprov, bkt, kmanifest).await?)?;
+        &sign_delete(s.credprov, &s.region_s3, bkt, kmanifest).await?)?;
 
     w.write(XmlEvent::start_element("import"))?;
 
@@ -316,9 +315,12 @@ async fn i_import_volume(s: Stuff<'_>, bkt: &str, kimage: &str, kmanifest: &str)
         .attr("end", &sz.end()))?;
     w.write(XmlEvent::end_element())?; /* byte-range */
     w.simple_tag("key", kimage)?;
-    w.simple_tag("head-url", &sign_head(s.credprov, bkt, kimage).await?)?;
-    w.simple_tag("get-url", &sign_get(s.credprov, bkt, kimage).await?)?;
-    w.simple_tag("delete-url", &sign_delete(s.credprov, bkt, kimage).await?)?;
+    w.simple_tag("head-url", &sign_head(s.credprov, &s.region_s3, bkt, kimage)
+        .await?)?;
+    w.simple_tag("get-url", &sign_get(s.credprov, &s.region_s3, bkt, kimage)
+        .await?)?;
+    w.simple_tag("delete-url", &sign_delete(s.credprov, &s.region_s3, bkt,
+        kimage).await?)?;
     w.write(XmlEvent::end_element())?; /* part */
 
     w.write(XmlEvent::end_element())?; /* parts */
@@ -343,8 +345,9 @@ async fn i_import_volume(s: Stuff<'_>, bkt: &str, kimage: &str, kmanifest: &str)
 
     println!("importing volume...");
 
-    let availability_zone = EC2_REGION.name().to_string() + "a";
-    let import_manifest_url = sign_get(s.credprov, bkt, &kmanifest).await?;
+    let availability_zone = s.region_ec2.name().to_string() + "a";
+    let import_manifest_url = sign_get(s.credprov, &s.region_s3, bkt,
+        &kmanifest).await?;
     let res = s.ec2.import_volume(ImportVolumeRequest {
         availability_zone,
         dry_run: Some(false),
@@ -634,7 +637,7 @@ async fn create_instance(s: Stuff<'_>) -> Result<()> {
     Ok(())
 }
 
-async fn everything(s: Stuff<'_>) -> Result<()> {
+async fn ami_from_file(s: Stuff<'_>) -> Result<()> {
     let name = s.args.opt_str("n").unwrap();
     let pfx = if let Some(pfx) = s.args.opt_str("p") {
         pfx
@@ -1551,7 +1554,9 @@ async fn i_register_image(s: Stuff<'_>, name: &str, snapid: &str, ena: bool)
 #[derive(Copy, Clone)]
 struct Stuff<'a> {
     s3: &'a dyn S3,
+    region_s3: &'a Region,
     ec2: &'a dyn Ec2,
+    region_ec2: &'a Region,
     credprov: &'a dyn ProvideAwsCredentials,
     args: &'a getopts::Matches,
 }
@@ -1564,6 +1569,8 @@ async fn main() -> Result<()> {
     let mut opts = getopts::Options::new();
     opts.parsing_style(getopts::ParsingStyle::StopAtFirstFree);
     opts.optflag("e", "", "use environment variables for credentials");
+    opts.optopt("r", "region-ec2", "region for EC2", "REGION");
+    opts.optopt("R", "region-s3", "region for S3", "REGION");
     opts.optflag("", "help", "print usage");
 
     fn tabular(opts: &mut getopts::Options) {
@@ -1633,14 +1640,14 @@ async fn main() -> Result<()> {
 
             |s| Box::pin(create_instance(s))
         }
-        Some("everything") => {
+        Some("everything") | Some("ami-from-file") => {
             opts.reqopt("b", "bucket", "S3 bucket", "BUCKET");
             opts.optopt("p", "prefix", "S3 prefix", "PREFIX");
             opts.reqopt("n", "name", "target image name", "NAME");
             opts.optflag("E", "ena", "enable ENA support");
             opts.reqopt("f", "file", "local file to upload", "FILENAME");
 
-            |s| Box::pin(everything(s))
+            |s| Box::pin(ami_from_file(s))
         }
         Some("put-object") => {
             opts.reqopt("b", "bucket", "S3 bucket", "BUCKET");
@@ -1687,27 +1694,40 @@ async fn main() -> Result<()> {
         Box::new(DefaultCredentialsProvider::new()?)
     };
 
+    let region_s3 = if let Some(reg) = args.opt_str("region-s3").as_deref() {
+        Region::from_str(reg).context("invalid S3 region")?
+    } else {
+        Region::default()
+    };
+    let region_ec2 = if let Some(reg) = args.opt_str("region-ec2").as_deref() {
+        Region::from_str(reg).context("invalid EC2 region")?
+    } else {
+        Region::default()
+    };
+
     let (s3, ec2) = if args.opt_present("e") {
         let s3 = S3Client::new_with(HttpClient::new()?,
             EnvironmentProvider::default(),
-            S3_REGION);
+            region_s3.clone());
         let ec2 = Ec2Client::new_with(HttpClient::new()?,
             EnvironmentProvider::default(),
-            EC2_REGION);
+            region_ec2.clone());
         (s3, ec2)
     } else {
         let s3 = S3Client::new_with(HttpClient::new()?,
             DefaultCredentialsProvider::new()?,
-            S3_REGION);
+            region_s3.clone());
         let ec2 = Ec2Client::new_with(HttpClient::new()?,
             DefaultCredentialsProvider::new()?,
-            EC2_REGION);
+            region_ec2.clone());
         (s3, ec2)
     };
 
     f(Stuff {
         s3: &s3,
+        region_s3: &region_s3,
         ec2: &ec2,
+        region_ec2: &region_ec2,
         credprov: credprov.as_ref(),
         args: &args,
     }).await?;
