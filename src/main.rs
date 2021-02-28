@@ -782,10 +782,16 @@ async fn start_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
     }
 }
 
-async fn stop_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
+async fn stop_instance(s: &Stuff<'_>, id: &str, force: bool) -> Result<()> {
     let lookup = InstanceLookup::ById(id.to_string());
 
-    println!("stopping instance {}...", id);
+    let pfx = if force {
+        "force "
+    } else {
+        ""
+    };
+
+    println!("{}stopping instance {}...", pfx, id);
 
     let mut stopped = false;
     let mut last_state = String::new();
@@ -808,9 +814,10 @@ async fn stop_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
         };
 
         if shouldstop && !stopped {
-            println!("    stopping...");
+            println!("    {}stopping...", pfx);
             let res = s.ec2.stop_instances(ec2::StopInstancesRequest {
                 instance_ids: vec![id.to_string()],
+                force: Some(force),
                 ..Default::default()
             }).await?;
             println!("    {:#?}", res);
@@ -1312,6 +1319,8 @@ async fn start(s: Stuff<'_>) -> Result<()> {
 }
 
 async fn stop(s: Stuff<'_>) -> Result<()> {
+    let force = s.args.opt_present("f");
+
     if s.args.free.len() != 1 {
         bail!("expect the name of just one instance");
     }
@@ -1320,7 +1329,7 @@ async fn stop(s: Stuff<'_>) -> Result<()> {
 
     println!("stopping instance: {:?}", i);
 
-    stop_instance(&s, &i.id).await?;
+    stop_instance(&s, &i.id, force).await?;
 
     println!("all done!");
 
@@ -1389,7 +1398,7 @@ async fn melbourne(s: Stuff<'_>) -> Result<()> {
             }
 
             println!("need to stop melbourne");
-            stop_instance(&s, &i_melbourne.id).await?;
+            stop_instance(&s, &i_melbourne.id, false).await?;
 
             println!("need to detach volume from melbourne");
             detach_volume(&s, &v_melbourne.id).await?;
@@ -1569,6 +1578,8 @@ async fn main() -> Result<()> {
             |s| Box::pin(start(s))
         }
         Some("stop") => {
+            opts.optflag("f", "", "force stop");
+
             |s| Box::pin(stop(s))
         }
         Some("protect") => {
