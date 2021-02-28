@@ -1,3 +1,7 @@
+/*
+ * Copyright 2021 Oxide Computer Company
+ */
+
 use rusoto_core::{Region, HttpClient};
 use rusoto_core::signature::SignedRequest;
 use rusoto_core::param::Params;
