@@ -1682,13 +1682,23 @@ async fn main() -> Result<()> {
         cmd => bail!("invalid command {:?}", cmd),
     };
 
-    let args = opts.parse(std::env::args().skip(2))?;
-
-    if args.opt_present("help") {
+    let usage = || {
         let prog = std::env::args().nth(0).as_deref().unwrap().to_string();
         let cmd = std::env::args().nth(1).as_deref().unwrap().to_string();
-        let u = opts.usage(&format!("usage: {} {} OPTIONS", prog, cmd));
-        println!("{}", u);
+        opts.usage(&format!("usage: {} {} OPTIONS", prog, cmd))
+    };
+
+    let args = match opts.parse(std::env::args().skip(2)) {
+        Ok(args) => args,
+        Err(e) => {
+            eprintln!("{}", usage());
+            eprintln!("ERROR: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    if args.opt_present("help") {
+        println!("{}", usage());
         std::process::exit(0);
     }
 
