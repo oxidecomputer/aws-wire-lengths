@@ -994,10 +994,16 @@ async fn get_instance_fuzzy(s: &Stuff<'_>, lookuparg: &str)
         InstanceLookup::ByName(lookuparg.to_string())
     };
 
-    Ok(get_instance(s, lookup).await?)
+    Ok(get_instance_x(s, lookup, true).await?)
 }
 
 async fn get_instance(s: &Stuff<'_>, lookup: InstanceLookup)
+    -> Result<Instance>
+{
+    Ok(get_instance_x(s, lookup, false).await?)
+}
+
+async fn get_instance_x(s: &Stuff<'_>, lookup: InstanceLookup, ignoreterm: bool)
     -> Result<Instance>
 {
     let filters = match &lookup {
@@ -1024,6 +1030,13 @@ async fn get_instance(s: &Stuff<'_>, lookup: InstanceLookup)
 
     for res in res.reservations.as_ref().unwrap_or(&vec![]).iter() {
         for inst in res.instances.as_ref().unwrap_or(&vec![]).iter() {
+            if ignoreterm {
+                let st = inst.state.as_ref().unwrap().name.as_deref().unwrap();
+                if st == "terminated" {
+                    continue;
+                }
+            }
+
             /*
              * Find the name tag value:
              */
