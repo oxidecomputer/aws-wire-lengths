@@ -1609,6 +1609,18 @@ struct Stuff {
     credprov: Option<Box<dyn ProvideAwsCredentials + Send + Sync>>,
 }
 
+impl Default for Stuff {
+    fn default() -> Stuff {
+        Stuff {
+            region_ec2: Region::default(),
+            region_s3: Region::default(),
+            ec2: None,
+            s3: None,
+            credprov: None,
+        }
+    }
+}
+
 impl Stuff {
     fn ec2(&self) -> &dyn Ec2 {
         self.ec2.as_ref().unwrap()
@@ -1673,16 +1685,7 @@ async fn do_image(mut l: Level<Stuff>) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut l = Level::new(
-        "aws-wire-lengths",
-        Stuff {
-            region_ec2: Region::default(),
-            region_s3: Region::default(),
-            ec2: None,
-            s3: None,
-            credprov: None,
-        },
-    );
+    let mut l = Level::new("aws-wire-lengths", Stuff::default());
 
     l.optflag("e", "", "use environment variables for credentials");
     l.optopt("r", "region-ec2", "region for EC2", "REGION");
