@@ -48,17 +48,13 @@ use anyhow::{anyhow, bail, Result, Context};
 use xml::writer::{EventWriter, EmitterConfig, XmlEvent};
 use std::io::{Read, Write};
 use std::time::Duration;
-use std::pin::Pin;
-use std::future::Future;
 use std::fs::File;
 use std::collections::HashMap;
 use bytes::BytesMut;
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
 use std::str::FromStr;
-
-mod table;
-use table::{TableBuilder, Row};
+use hiercmd::prelude::*;
 
 trait RowExt {
     fn add_stror(&mut self, n: &str, v: &Option<String>, def: &str);
@@ -148,21 +144,21 @@ async fn sign_get(c: &dyn ProvideAwsCredentials, r: &Region, b: &str, k: &str)
     }))
 }
 
-async fn put_object(s: Stuff<'_>) -> Result<()> {
-    let bucket = s.args.opt_str("b").unwrap();
-    let object = s.args.opt_str("o").unwrap();
-    let file = s.args.opt_str("f").unwrap();
+// async fn put_object(mut l: Level<Stuff>) -> Result<()> {
+//     let bucket = s.args.opt_str("b").unwrap();
+//     let object = s.args.opt_str("o").unwrap();
+//     let file = s.args.opt_str("f").unwrap();
+//
+//     i_put_object(s, &bucket, &object, &file).await?;
+//     Ok(())
+// }
 
-    i_put_object(s, &bucket, &object, &file).await?;
-    Ok(())
-}
-
-async fn i_put_object(s: Stuff<'_>, bucket: &str, object: &str, file: &str)
+async fn i_put_object(s: &Stuff, bucket: &str, object: &str, file: &str)
     -> Result<()>
 {
     let mut f = File::open(&file)?;
 
-    let res = s.s3.create_multipart_upload(CreateMultipartUploadRequest {
+    let res = s.s3().create_multipart_upload(CreateMultipartUploadRequest {
         bucket: bucket.to_string(),
         key: object.to_string(),
         ..Default::default()
@@ -192,7 +188,7 @@ async fn i_put_object(s: Stuff<'_>, bucket: &str, object: &str, file: &str)
         let se = futures::stream::once(async { Ok(froz) });
         let body = Some(rusoto_s3::StreamingBody::new(se));
 
-        let res = s.s3.upload_part(UploadPartRequest {
+        let res = s.s3().upload_part(UploadPartRequest {
             body,
             content_length: Some(sz as i64),
             upload_id: upload_id.to_string(),
@@ -212,7 +208,7 @@ async fn i_put_object(s: Stuff<'_>, bucket: &str, object: &str, file: &str)
 
     println!("uploaded {} chunks, total size {}", parts.len(), total_size);
 
-    s.s3.complete_multipart_upload(CompleteMultipartUploadRequest {
+    s.s3().complete_multipart_upload(CompleteMultipartUploadRequest {
         bucket: bucket.to_string(),
         key: object.to_string(),
         upload_id: upload_id.to_string(),
@@ -267,22 +263,22 @@ async fn image_size(s3: &dyn S3, b: &str, k: &str) -> Result<ImageSizes> {
     Ok(ImageSizes { bytes, gb })
 }
 
-async fn import_volume(s: Stuff<'_>) -> Result<()> {
-    let pfx = s.args.opt_str("p").unwrap();
-    let bucket = s.args.opt_str("b").unwrap();
-    let kimage = pfx.clone() + "/disk.raw";
-    let kmanifest = pfx.clone() + "/manifest.xml";
+// async fn import_volume(mut l: Level<Stuff>) -> Result<()> {
+//     let pfx = s.args.opt_str("p").unwrap();
+//     let bucket = s.args.opt_str("b").unwrap();
+//     let kimage = pfx.clone() + "/disk.raw";
+//     let kmanifest = pfx.clone() + "/manifest.xml";
+//
+//     let volid = i_import_volume(s, &bucket, &kimage, &kmanifest).await?;
+//     println!("COMPLETED VOLUME ID: {}", volid);
+//
+//     Ok(())
+// }
 
-    let volid = i_import_volume(s, &bucket, &kimage, &kmanifest).await?;
-    println!("COMPLETED VOLUME ID: {}", volid);
-
-    Ok(())
-}
-
-async fn i_import_volume(s: Stuff<'_>, bkt: &str, kimage: &str, kmanifest: &str)
+async fn i_import_volume(s: &Stuff, bkt: &str, kimage: &str, kmanifest: &str)
     -> Result<String>
 {
-    let sz = image_size(s.s3, bkt, kimage).await?;
+    let sz = image_size(s.s3(), bkt, kimage).await?;
     println!("  IMAGE SIZE: {:?}", sz);
 
     /*
@@ -305,7 +301,7 @@ async fn i_import_volume(s: Stuff<'_>, bkt: &str, kimage: &str, kmanifest: &str)
     w.write(XmlEvent::end_element())?;
 
     w.simple_tag("self-destruct-url",
-        &sign_delete(s.credprov, &s.region_s3, bkt, kmanifest).await?)?;
+        &sign_delete(s.credprov(), s.region_s3(), bkt, kmanifest).await?)?;
 
     w.write(XmlEvent::start_element("import"))?;
 
@@ -319,11 +315,11 @@ async fn i_import_volume(s: Stuff<'_>, bkt: &str, kimage: &str, kmanifest: &str)
         .attr("end", &sz.end()))?;
     w.write(XmlEvent::end_element())?; /* byte-range */
     w.simple_tag("key", kimage)?;
-    w.simple_tag("head-url", &sign_head(s.credprov, &s.region_s3, bkt, kimage)
+    w.simple_tag("head-url", &sign_head(s.credprov(), s.region_s3(), bkt, kimage)
         .await?)?;
-    w.simple_tag("get-url", &sign_get(s.credprov, &s.region_s3, bkt, kimage)
+    w.simple_tag("get-url", &sign_get(s.credprov(), s.region_s3(), bkt, kimage)
         .await?)?;
-    w.simple_tag("delete-url", &sign_delete(s.credprov, &s.region_s3, bkt,
+    w.simple_tag("delete-url", &sign_delete(s.credprov(), s.region_s3(), bkt,
         kimage).await?)?;
     w.write(XmlEvent::end_element())?; /* part */
 
@@ -343,16 +339,16 @@ async fn i_import_volume(s: Stuff<'_>, bkt: &str, kimage: &str, kmanifest: &str)
         body: Some(out.into()),
         ..Default::default()
     };
-    s.s3.put_object(req).await?;
+    s.s3().put_object(req).await?;
 
     println!("ok!");
 
     println!("importing volume...");
 
-    let availability_zone = s.region_ec2.name().to_string() + "a";
-    let import_manifest_url = sign_get(s.credprov, &s.region_s3, bkt,
-        &kmanifest).await?;
-    let res = s.ec2.import_volume(ImportVolumeRequest {
+    let availability_zone = s.region_ec2().name().to_string() + "a";
+    let import_manifest_url = sign_get(s.credprov(), s.region_s3(), bkt,
+        kmanifest).await?;
+    let res = s.ec2().import_volume(ImportVolumeRequest {
         availability_zone,
         dry_run: Some(false),
         image: DiskImageDetail {
@@ -390,7 +386,7 @@ async fn i_import_volume(s: Stuff<'_>, bkt: &str, kimage: &str, kmanifest: &str)
             ..Default::default()
         };
 
-        let res = s.ec2.describe_conversion_tasks(dct).await?;
+        let res = s.ec2().describe_conversion_tasks(dct).await?;
 
         let mut v = res.conversion_tasks.ok_or_else(|| anyhow!("no ct"))?;
 
@@ -442,17 +438,17 @@ async fn i_import_volume(s: Stuff<'_>, bkt: &str, kimage: &str, kmanifest: &str)
     Ok(volid.unwrap())
 }
 
-async fn create_snapshot(s: Stuff<'_>) -> Result<()> {
-    let volid = s.args.opt_str("v").unwrap();
+// async fn create_snapshot(mut l: Level<Stuff>) -> Result<()> {
+//     let volid = s.args.opt_str("v").unwrap();
+//
+//     let snapid = i_create_snapshot(s, &volid).await?;
+//     println!("COMPLETED SNAPSHOT ID: {}", snapid);
+//
+//     Ok(())
+// }
 
-    let snapid = i_create_snapshot(s, &volid).await?;
-    println!("COMPLETED SNAPSHOT ID: {}", snapid);
-
-    Ok(())
-}
-
-async fn i_create_snapshot(s: Stuff<'_>, volid: &str) -> Result<String> {
-    let res = s.ec2.create_snapshot(CreateSnapshotRequest {
+async fn i_create_snapshot(s: &Stuff, volid: &str) -> Result<String> {
+    let res = s.ec2().create_snapshot(CreateSnapshotRequest {
         volume_id: volid.to_string(),
         ..Default::default()
     }).await?;
@@ -463,7 +459,7 @@ async fn i_create_snapshot(s: Stuff<'_>, volid: &str) -> Result<String> {
     println!("SNAPSHOT ID: {}", snapid);
 
     loop {
-        let res = s.ec2.describe_snapshots(DescribeSnapshotsRequest {
+        let res = s.ec2().describe_snapshots(DescribeSnapshotsRequest {
             snapshot_ids: Some(vec![snapid.clone()]),
             ..Default::default()
         }).await?;
@@ -525,7 +521,7 @@ struct InstanceOptions {
     public_ip: Option<bool>,
 }
 
-async fn i_create_instance(s: Stuff<'_>, io: &InstanceOptions)
+async fn i_create_instance(s: &Stuff, io: &InstanceOptions)
     -> Result<String>
 {
     let tag_specifications = if !io.tags.is_empty() {
@@ -576,7 +572,7 @@ async fn i_create_instance(s: Stuff<'_>, io: &InstanceOptions)
         ..Default::default()
     };
 
-    let res = s.ec2.run_instances(rir).await?;
+    let res = s.ec2().run_instances(rir).await?;
     let mut ids = Vec::new();
     if let Some(insts) = &res.instances {
         for i in insts.iter() {
@@ -591,11 +587,24 @@ async fn i_create_instance(s: Stuff<'_>, io: &InstanceOptions)
     }
 }
 
-async fn create_instance(s: Stuff<'_>) -> Result<()> {
+async fn create_instance(mut l: Level<Stuff>) -> Result<()> {
+    l.optopt("n", "name", "instance name", "NAME");
+    l.optopt("i", "image", "image (AMI)", "AMI_ID");
+    l.optopt("t", "type", "instance type", "TYPE");
+    l.optopt("k", "key", "SSH key name", "KEY_NAME");
+    l.optopt("s", "sg", "security group ID", "SG_ID");
+    l.optopt("S", "subnet", "subnet ID", "SUBNET_ID");
+    l.optopt("u", "userdata", "userdata (in plain text)", "DATA");
+    l.optopt("d", "disksize", "root disk size (GB)", "GIGABYTES");
+    l.optopt("f", "file", "defaults TOML file to use", "PATH");
+    l.optflag("p", "public-ip", "request a public IP");
+
+    let a = args!(l);
+
     /*
      * If an instance defaults file was provided, load it now:
      */
-    let defs: HashMap<String, String> = if let Some(p) = s.args.opt_str("f") {
+    let defs: HashMap<String, String> = if let Some(p) = a.opts().opt_str("f") {
         let mut f = File::open(&p)?;
         let mut buf = Vec::<u8>::new();
         f.read_to_end(&mut buf)?;
@@ -605,12 +614,10 @@ async fn create_instance(s: Stuff<'_>) -> Result<()> {
     };
 
     let fetchopt = |n: &str| -> Option<String> {
-        if let Some(v) = s.args.opt_str(n) {
+        if let Some(v) = a.opts().opt_str(n) {
             Some(v)
-        } else if let Some(v) = defs.get(n) {
-            Some(v.to_string())
         } else {
-            None
+            defs.get(n).map(|v| v.to_string())
         }
     };
     let fetch = |n: &str| -> Result<String> {
@@ -626,7 +633,7 @@ async fn create_instance(s: Stuff<'_>) -> Result<()> {
     let mut tags = HashMap::new();
     tags.insert("Name".to_string(), fetch("name")?);
 
-    let public_ip = if s.args.opt_present("p") {
+    let public_ip = if a.opts().opt_present("p") {
         Some(true)
     } else {
         None
@@ -644,40 +651,60 @@ async fn create_instance(s: Stuff<'_>) -> Result<()> {
         public_ip,
     };
 
-    let id = i_create_instance(s, &io).await?;
+    let id = i_create_instance(l.context(), &io).await?;
     println!("CREATED INSTANCE {}", id);
 
     Ok(())
 }
 
-async fn ami_from_file(s: Stuff<'_>) -> Result<()> {
-    let name = s.args.opt_str("n").unwrap();
-    let pfx = if let Some(pfx) = s.args.opt_str("p") {
+async fn ami_from_file(mut l: Level<Stuff>) -> Result<()> {
+    l.optopt("b", "bucket", "S3 bucket", "BUCKET");
+    l.optopt("p", "prefix", "S3 prefix", "PREFIX");
+    l.optopt("n", "name", "target image name", "NAME");
+    l.optflag("E", "ena", "enable ENA support");
+    l.optopt("f", "file", "local file to upload", "FILENAME");
+
+    let a = no_args!(l);
+    if !a.opts().opt_present("b") {
+        l.usage();
+        bail!("--bucket (-b) is a required option");
+    }
+    if !a.opts().opt_present("n") {
+        l.usage();
+        bail!("--name (-n) is a required option");
+    }
+    if !a.opts().opt_present("f") {
+        l.usage();
+        bail!("--file (-f) is a required option");
+    }
+
+    let name = a.opts().opt_str("n").unwrap();
+    let pfx = if let Some(pfx) = a.opts().opt_str("p") {
         pfx
     } else {
         genkey(64)
     };
-    let bucket = s.args.opt_str("b").unwrap();
-    let file = s.args.opt_str("f").unwrap();
-    let support_ena = s.args.opt_present("E");
+    let bucket = a.opts().opt_str("b").unwrap();
+    let file = a.opts().opt_str("f").unwrap();
+    let support_ena = a.opts().opt_present("E");
 
     let kimage = pfx.clone() + "/disk.raw";
     let kmanifest = pfx.clone() + "/manifest.xml";
 
     println!("UPLOADING DISK TO S3 AS: {}", kimage);
-    i_put_object(s, &bucket, &kimage, &file).await?;
+    i_put_object(l.context(), &bucket, &kimage, &file).await?;
     println!("COMPLETED UPLOAD");
 
     println!("IMPORTING VOLUME:");
-    let volid = i_import_volume(s, &bucket, &kimage, &kmanifest).await?;
+    let volid = i_import_volume(l.context(), &bucket, &kimage, &kmanifest).await?;
     println!("COMPLETED VOLUME ID: {}", volid);
 
     println!("CREATING SNAPSHOT:");
-    let snapid = i_create_snapshot(s, &volid).await?;
+    let snapid = i_create_snapshot(l.context(), &volid).await?;
     println!("COMPLETED SNAPSHOT ID: {}", snapid);
 
     println!("REGISTERING IMAGE:");
-    let ami = i_register_image(s, &name, &snapid, support_ena).await?;
+    let ami = i_register_image(l.context(), &name, &snapid, support_ena).await?;
     println!("COMPLETED IMAGE ID: {}", ami);
 
     /*
@@ -701,6 +728,7 @@ struct Volume {
     attach: Option<Attach>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum VolumeLookup {
     ById(String),
@@ -722,7 +750,8 @@ enum InstanceLookup {
     ByName(String),
 }
 
-async fn detach_volume(s: &Stuff<'_>, id: &str) -> Result<()> {
+#[allow(dead_code)]
+async fn detach_volume(s: &Stuff, id: &str) -> Result<()> {
     let lookup = VolumeLookup::ById(id.to_string());
 
     println!("detaching volume {}...", id);
@@ -742,7 +771,7 @@ async fn detach_volume(s: &Stuff<'_>, id: &str) -> Result<()> {
             println!("    attach: {:?}", a);
 
             if !detached {
-                let res = s.ec2.detach_volume(ec2::DetachVolumeRequest {
+                let res = s.ec2().detach_volume(ec2::DetachVolumeRequest {
                     volume_id: vol.id.clone(),
                     ..Default::default()
                 }).await?;
@@ -756,7 +785,7 @@ async fn detach_volume(s: &Stuff<'_>, id: &str) -> Result<()> {
     }
 }
 
-async fn start_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
+async fn start_instance(s: &Stuff, id: &str) -> Result<()> {
     let lookup = InstanceLookup::ById(id.to_string());
 
     println!("starting instance {}...", id);
@@ -786,7 +815,7 @@ async fn start_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
 
         if shouldstart && !started {
             println!("    starting...");
-            let res = s.ec2.start_instances(ec2::StartInstancesRequest {
+            let res = s.ec2().start_instances(ec2::StartInstancesRequest {
                 instance_ids: vec![id.to_string()],
                 ..Default::default()
             }).await?;
@@ -798,7 +827,7 @@ async fn start_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
     }
 }
 
-async fn stop_instance(s: &Stuff<'_>, id: &str, force: bool) -> Result<()> {
+async fn stop_instance(s: &Stuff, id: &str, force: bool) -> Result<()> {
     let lookup = InstanceLookup::ById(id.to_string());
 
     let pfx = if force {
@@ -831,7 +860,7 @@ async fn stop_instance(s: &Stuff<'_>, id: &str, force: bool) -> Result<()> {
 
         if shouldstop && !stopped {
             println!("    {}stopping...", pfx);
-            let res = s.ec2.stop_instances(ec2::StopInstancesRequest {
+            let res = s.ec2().stop_instances(ec2::StopInstancesRequest {
                 instance_ids: vec![id.to_string()],
                 force: Some(force),
                 ..Default::default()
@@ -844,14 +873,14 @@ async fn stop_instance(s: &Stuff<'_>, id: &str, force: bool) -> Result<()> {
     }
 }
 
-async fn protect_instance(s: &Stuff<'_>, id: &str, prot: bool) -> Result<()> {
+async fn protect_instance(s: &Stuff, id: &str, prot: bool) -> Result<()> {
     println!("setting protect to {} on instance {}...", prot, id);
 
     let val = ec2::AttributeBooleanValue {
         value: Some(prot),
     };
 
-    s.ec2.modify_instance_attribute(
+    s.ec2().modify_instance_attribute(
         ec2::ModifyInstanceAttributeRequest {
             instance_id: id.to_string(),
             disable_api_termination: Some(val),
@@ -861,7 +890,7 @@ async fn protect_instance(s: &Stuff<'_>, id: &str, prot: bool) -> Result<()> {
     Ok(())
 }
 
-async fn destroy_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
+async fn destroy_instance(s: &Stuff, id: &str) -> Result<()> {
     let lookup = InstanceLookup::ById(id.to_string());
 
     println!("destroying instance {}...", id);
@@ -888,7 +917,7 @@ async fn destroy_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
 
         if shouldterminate && !terminated {
             println!("    terminating...");
-            let res = s.ec2.terminate_instances(ec2::TerminateInstancesRequest {
+            let res = s.ec2().terminate_instances(ec2::TerminateInstancesRequest {
                 instance_ids: vec![id.to_string()],
                 ..Default::default()
             }).await?;
@@ -900,9 +929,8 @@ async fn destroy_instance(s: &Stuff<'_>, id: &str) -> Result<()> {
     }
 }
 
-async fn get_volume(s: &Stuff<'_>, lookup: VolumeLookup)
-    -> Result<Volume>
-{
+#[allow(dead_code)]
+async fn get_volume(s: &Stuff, lookup: VolumeLookup) -> Result<Volume> {
     let filters = match &lookup {
         VolumeLookup::ById(id) => Some(vec![
             ec2::Filter {
@@ -918,7 +946,7 @@ async fn get_volume(s: &Stuff<'_>, lookup: VolumeLookup)
         ]),
     };
 
-    let res = s.ec2.describe_volumes(ec2::DescribeVolumesRequest {
+    let res = s.ec2().describe_volumes(ec2::DescribeVolumesRequest {
         filters,
         ..Default::default()
     }).await?;
@@ -985,7 +1013,7 @@ async fn get_volume(s: &Stuff<'_>, lookup: VolumeLookup)
     Ok(out.pop().unwrap())
 }
 
-async fn get_instance_fuzzy(s: &Stuff<'_>, lookuparg: &str)
+async fn get_instance_fuzzy(s: &Stuff, lookuparg: &str)
     -> Result<Instance>
 {
     let lookup = if lookuparg.starts_with("i-") {
@@ -997,13 +1025,13 @@ async fn get_instance_fuzzy(s: &Stuff<'_>, lookuparg: &str)
     Ok(get_instance_x(s, lookup, true).await?)
 }
 
-async fn get_instance(s: &Stuff<'_>, lookup: InstanceLookup)
+async fn get_instance(s: &Stuff, lookup: InstanceLookup)
     -> Result<Instance>
 {
     Ok(get_instance_x(s, lookup, false).await?)
 }
 
-async fn get_instance_x(s: &Stuff<'_>, lookup: InstanceLookup, ignoreterm: bool)
+async fn get_instance_x(s: &Stuff, lookup: InstanceLookup, ignoreterm: bool)
     -> Result<Instance>
 {
     let filters = match &lookup {
@@ -1021,7 +1049,7 @@ async fn get_instance_x(s: &Stuff<'_>, lookup: InstanceLookup, ignoreterm: bool)
         ]),
     };
 
-    let res = s.ec2.describe_instances(ec2::DescribeInstancesRequest {
+    let res = s.ec2().describe_instances(ec2::DescribeInstancesRequest {
         filters,
         ..Default::default()
     }).await?;
@@ -1075,30 +1103,27 @@ async fn get_instance_x(s: &Stuff<'_>, lookup: InstanceLookup, ignoreterm: bool)
     Ok(out.pop().unwrap())
 }
 
-async fn snapshots(s: Stuff<'_>) -> Result<()> {
-    let mut t = TableBuilder::new()
-        .add_column("id", 22)
-        .add_column("start", 24)
-        .add_column("state", 10)
-        .add_column("size", 5)
-        .add_column("volume", 22)
-        .add_column("desc", 30)
-        .output_from_list(Some("id,start,size,state,desc"))
-        .output_from_list(s.args.opt_str("o").as_deref())
-        .sort_from_list_desc(Some("start"))
-        .sort_from_list_asc(s.args.opt_str("s").as_deref())
-        .sort_from_list_desc(s.args.opt_str("S").as_deref())
-        .disable_header(s.args.opt_present("H"))
-        .build();
+async fn snapshots(mut l: Level<Stuff>) -> Result<()> {
+    l.add_column("id", 22, true);
+    l.add_column("start", 24, true);
+    l.add_column("size", 5, true);
+    l.add_column("state", 10, true);
+    l.add_column("desc", 30, true);
+    l.add_column("volume", 22, false);
+    // XXX l.sort_from_list_desc(Some("start"))
 
-    let res = s.ec2.describe_snapshots(ec2::DescribeSnapshotsRequest {
+    let a = no_args!(l);
+    let mut t = a.table();
+    let s = l.context();
+
+    let res = s.ec2().describe_snapshots(ec2::DescribeSnapshotsRequest {
         owner_ids: Some(vec!["self".to_string()]),
         ..Default::default()
     }).await?;
 
     let x = Vec::new();
     for s in res.snapshots.as_ref().unwrap_or(&x) {
-        let mut r = Row::new();
+        let mut r = Row::default();
 
         r.add_stror("id", &s.snapshot_id, "?");
         r.add_stror("start", &s.start_time, "-");
@@ -1115,32 +1140,28 @@ async fn snapshots(s: Stuff<'_>) -> Result<()> {
     Ok(())
 }
 
-async fn volumes(s: Stuff<'_>) -> Result<()> {
-    let mut t = TableBuilder::new()
-        .add_column("id", 21)
-        .add_column("state", 10)
-        .add_column("size", 5)
-        .add_column("snapshot", 22)
-        .add_column("name", 24)
-        .add_column("info", 30)
-        .add_column("creation", 24)
-        .add_column("az", 12)
-        .add_column("natt", 4) /* Number of attachments */
-        .output_from_list(Some("id,state,natt,info"))
-        .output_from_list(s.args.opt_str("o").as_deref())
-        .sort_from_list_desc(Some("creation"))
-        .sort_from_list_asc(s.args.opt_str("s").as_deref())
-        .sort_from_list_desc(s.args.opt_str("S").as_deref())
-        .disable_header(s.args.opt_present("H"))
-        .build();
+async fn volumes(mut l: Level<Stuff>) -> Result<()> {
+    l.add_column("creation", 24, false);
+    l.add_column("id", 21, true);
+    l.add_column("state", 10, true);
+    l.add_column("natt", 4, true); /* Number of attachments */
+    l.add_column("info", 30, true);
+    l.add_column("size", 5, false);
+    l.add_column("snapshot", 22, false);
+    l.add_column("name", 24, false);
+    l.add_column("az", 12, false);
 
-    let res = s.ec2.describe_volumes(ec2::DescribeVolumesRequest {
+    let a = no_args!(l);
+    let mut t = a.table();
+    let s = l.context();
+
+    let res = s.ec2().describe_volumes(ec2::DescribeVolumesRequest {
         ..Default::default()
     }).await?;
 
     let x = Vec::new();
     for v in res.volumes.as_ref().unwrap_or(&x) {
-        let mut r = Row::new();
+        let mut r = Row::default();
 
         /*
          * The magic INFO column contains information we were able to glean by
@@ -1153,7 +1174,7 @@ async fn volumes(s: Stuff<'_>) -> Result<()> {
             let a = atts.iter().next().unwrap();
 
             if let Some(aid) = a.instance_id.as_deref() {
-                let ai = get_instance(&s,
+                let ai = get_instance(s,
                     InstanceLookup::ById(aid.to_string())).await?;
 
                 if let Some(n) = ai.name.as_deref() {
@@ -1185,28 +1206,25 @@ async fn volumes(s: Stuff<'_>) -> Result<()> {
 }
 
 
-async fn images(s: Stuff<'_>) -> Result<()> {
-    let mut t = TableBuilder::new()
-        .add_column("id", 21)
-        .add_column("name", 24)
-        .add_column("creation", 24)
-        .add_column("snapshots", 22)
-        .output_from_list(Some("id,name,creation"))
-        .output_from_list(s.args.opt_str("o").as_deref())
-        .sort_from_list_desc(Some("creation"))
-        .sort_from_list_asc(s.args.opt_str("s").as_deref())
-        .sort_from_list_desc(s.args.opt_str("S").as_deref())
-        .disable_header(s.args.opt_present("H"))
-        .build();
+async fn images(mut l: Level<Stuff>) -> Result<()> {
+    l.add_column("id", 21, true);
+    l.add_column("name", 24, true);
+    l.add_column("creation", 24, true);
+    l.add_column("snapshots", 22, false);
+    // XXX l.sort_from_list_desc(Some("creation"))
 
-    let res = s.ec2.describe_images(ec2::DescribeImagesRequest {
+    let a = no_args!(l);
+    let mut t = a.table();
+    let s = l.context();
+
+    let res = s.ec2().describe_images(ec2::DescribeImagesRequest {
         owners: Some(vec!["self".to_string()]),
         ..Default::default()
     }).await?;
 
     let x = Vec::new();
     for i in res.images.as_ref().unwrap_or(&x) {
-        let mut r = Row::new();
+        let mut r = Row::default();
 
         /*
          * If we know which snapshot ID this image is based on, render it in
@@ -1244,13 +1262,15 @@ async fn images(s: Stuff<'_>) -> Result<()> {
     Ok(())
 }
 
-async fn ip(s: Stuff<'_>) -> Result<()> {
-    if s.args.free.len() != 1 {
+async fn ip(mut l: Level<Stuff>) -> Result<()> {
+    let a = args!(l);
+
+    if a.args().len() != 1 {
         bail!("specify just one instance");
     }
-    let n = s.args.free[0].as_str();
+    let n = a.args()[0].as_str();
 
-    let i = get_instance_fuzzy(&s, n).await?;
+    let i = get_instance_fuzzy(l.context(), n).await?;
     if let Some(ip) = i.ip {
         println!("{}", ip);
         Ok(())
@@ -1259,42 +1279,41 @@ async fn ip(s: Stuff<'_>) -> Result<()> {
     }
 }
 
-async fn info(s: Stuff<'_>) -> Result<()> {
-    let mut t = TableBuilder::new();
-    t.add_column("id", 19);
-    t.add_column("name", 28);
-    t.add_column("launch", 24);
-    t.add_column("ip", 15);
-    t.add_column("state", 16);
-    t.add_column("type", 12);
-    for tag in s.args.opt_strs("T") {
-        t.add_column(&tag, 20);
-    }
-    t.output_from_list(Some("id,name,ip,state"));
-    t.output_from_list(s.args.opt_str("o").as_deref());
-    t.sort_from_list_desc(Some("launch"));
-    t.sort_from_list_asc(s.args.opt_str("s").as_deref());
-    t.sort_from_list_desc(s.args.opt_str("S").as_deref());
-    t.disable_header(s.args.opt_present("H"));
-    let mut t = t.build();
+async fn info(mut l: Level<Stuff>) -> Result<()> {
+    // XXX l.optmulti("T", "", "specify a tag as an extra column", "TAG");
 
-    if !s.args.free.is_empty() {
-        for n in s.args.free.iter() {
-            let i = get_instance_fuzzy(&s, n).await?;
+    l.add_column("launch", 24, false);
+    l.add_column("id", 19, true);
+    l.add_column("name", 28, true);
+    l.add_column("ip", 15, true);
+    l.add_column("state", 16, true);
+    l.add_column("type", 12, false);
+    // XXX for tag in s.args.opt_strs("T") {
+    // XXX     l.add_column(&tag, 20, true);
+    // XXX }
 
-            let mut r = Row::new();
+    let a = args!(l);
+    let mut t = a.table();
+
+    if !a.args().is_empty() {
+        for n in a.args().iter() {
+            let i = get_instance_fuzzy(l.context(), n).await?;
+
+            let mut r = Row::default();
             r.add_str("id", &i.id);
             r.add_stror("name", &i.name, "-");
             r.add_str("launch", &i.launch);
             r.add_stror("ip", &i.ip, "-");
             r.add_str("state", &i.state);
-            for tag in s.args.opt_strs("T") {
-                r.add_str(&tag, "-"); /* XXX */
-            }
+            // XXX for tag in s.args.opt_strs("T") {
+            // XXX     r.add_str(&tag, "-"); /* XXX */
+            // XXX }
             t.add_row(r);
         }
     } else {
-        let res = s.ec2.describe_instances(ec2::DescribeInstancesRequest {
+        let s = l.context();
+
+        let res = s.ec2().describe_instances(ec2::DescribeInstancesRequest {
             ..Default::default()
         }).await?;
 
@@ -1302,7 +1321,7 @@ async fn info(s: Stuff<'_>) -> Result<()> {
             for r in r.iter() {
                 if let Some(i) = &r.instances {
                     for i in i.iter() {
-                        let mut r = Row::new();
+                        let mut r = Row::default();
 
                         let pubip = i.public_ip_address.as_deref();
                         let privip = i.private_ip_address.as_deref();
@@ -1315,9 +1334,9 @@ async fn info(s: Stuff<'_>) -> Result<()> {
                         r.add_str("state", i.state.as_ref().unwrap()
                             .name.as_deref().unwrap());
 
-                        for tag in s.args.opt_strs("T") {
-                            r.add_stror(&tag, &i.tags.tag(&tag), "-");
-                        }
+                        // XXX for tag in s.args.opt_strs("T") {
+                        // XXX     r.add_stror(&tag, &i.tags.tag(&tag), "-");
+                        // XXX }
 
                         t.add_row(r);
                     }
@@ -1331,182 +1350,120 @@ async fn info(s: Stuff<'_>) -> Result<()> {
     Ok(())
 }
 
-async fn start(s: Stuff<'_>) -> Result<()> {
-    if s.args.free.len() != 1 {
+async fn start(mut l: Level<Stuff>) -> Result<()> {
+    let a = args!(l);
+    if a.args().len() != 1 {
         bail!("expect the name of just one instance");
     }
 
-    let i = get_instance_fuzzy(&s, s.args.free.get(0).unwrap()).await?;
+    let i = get_instance_fuzzy(l.context(), a.args().get(0).unwrap()).await?;
 
     println!("starting instance: {:?}", i);
 
-    start_instance(&s, &i.id).await?;
+    start_instance(l.context(), &i.id).await?;
 
     println!("all done!");
 
     Ok(())
 }
 
-async fn stop(s: Stuff<'_>) -> Result<()> {
-    let force = s.args.opt_present("f");
+async fn stop(mut l: Level<Stuff>) -> Result<()> {
+    l.optflag("f", "", "force stop");
 
-    if s.args.free.len() != 1 {
+    let a = args!(l);
+
+    let force = a.opts().opt_present("f");
+
+    if a.args().len() != 1 {
         bail!("expect the name of just one instance");
     }
 
-    let i = get_instance_fuzzy(&s, s.args.free.get(0).unwrap()).await?;
+    let i = get_instance_fuzzy(l.context(), a.args().get(0).unwrap()).await?;
 
     println!("stopping instance: {:?}", i);
 
-    stop_instance(&s, &i.id, force).await?;
+    stop_instance(l.context(), &i.id, force).await?;
 
     println!("all done!");
 
     Ok(())
 }
 
-async fn protect(s: Stuff<'_>, protect: bool) -> Result<()> {
-    if s.args.free.len() != 1 {
+async fn protect(mut l: Level<Stuff>) -> Result<()> {
+    let a = args!(l);
+
+    if a.args().len() != 1 {
         bail!("expect the name of just one instance");
     }
 
-    let i = get_instance_fuzzy(&s, s.args.free.get(0).unwrap()).await?;
+    let i = get_instance_fuzzy(l.context(), a.args().get(0).unwrap()).await?;
 
-    if protect {
-        println!("protecting instance: {:?}", i);
-    } else {
-        println!("unprotecting instance: {:?}", i);
-    }
+    println!("protecting instance: {:?}", i);
 
-    protect_instance(&s, &i.id, protect).await?;
+    protect_instance(l.context(), &i.id, true).await?;
 
     println!("all done!");
 
     Ok(())
 }
 
-async fn destroy(s: Stuff<'_>) -> Result<()> {
-    if s.args.free.len() != 1 {
+async fn unprotect(mut l: Level<Stuff>) -> Result<()> {
+    let a = args!(l);
+
+    if a.args().len() != 1 {
         bail!("expect the name of just one instance");
     }
 
-    let i = get_instance_fuzzy(&s, s.args.free.get(0).unwrap()).await?;
+    let i = get_instance_fuzzy(l.context(), a.args().get(0).unwrap()).await?;
+
+    println!("unprotecting instance: {:?}", i);
+
+    protect_instance(l.context(), &i.id, false).await?;
+
+    println!("all done!");
+
+    Ok(())
+}
+
+async fn destroy(mut l: Level<Stuff>) -> Result<()> {
+    let a = args!(l);
+
+    if a.args().len() != 1 {
+        bail!("expect the name of just one instance");
+    }
+
+    let i = get_instance_fuzzy(l.context(), a.args().get(0).unwrap()).await?;
 
     println!("destroying instance: {:?}", i);
 
-    destroy_instance(&s, &i.id).await?;
+    destroy_instance(l.context(), &i.id).await?;
 
     println!("all done!");
 
     Ok(())
 }
 
-async fn melbourne(s: Stuff<'_>) -> Result<()> {
-    let target = s.args.opt_str("t").unwrap();
+// async fn register_image(mut l: Level<Stuff>) -> Result<()> {
+//     let name = s.args.opt_str("n").unwrap();
+//     let snapid = s.args.opt_str("s").unwrap();
+//     let support_ena = s.args.opt_present("E");
+//
+//     let imageid = i_register_image(s, &name, &snapid, support_ena).await?;
+//     println!("COMPLETED IMAGE ID: {}", imageid);
+//
+//     Ok(())
+// }
 
-    let i_melbourne = get_instance(&s,
-        InstanceLookup::ByName("melbourne".to_string())).await?;
-    let i_watson = get_instance(&s,
-        InstanceLookup::ByName("watson".to_string())).await?;
-    let v_melbourne = get_volume(&s,
-        VolumeLookup::ByName("melbourne".to_string())).await?;
-
-    if i_melbourne.name.is_none() || i_watson.name.is_none() {
-        bail!("instances must have names for this to work");
-    }
-
-    println!("melbourne: {:?}", i_melbourne);
-    println!("watson: {:?}", i_watson);
-    println!("volume: {:?}", v_melbourne);
-
-    if let Some(a) = &v_melbourne.attach {
-        if a.instance_id == i_melbourne.id {
-            if target == i_melbourne.name.as_deref().unwrap() {
-                println!("already attached to melbourne!");
-                return Ok(());
-            }
-
-            println!("need to stop melbourne");
-            stop_instance(&s, &i_melbourne.id, false).await?;
-
-            println!("need to detach volume from melbourne");
-            detach_volume(&s, &v_melbourne.id).await?;
-
-        } else if a.instance_id == i_watson.id {
-            if target == i_watson.name.as_deref().unwrap() {
-                println!("already attached to watson!");
-                return Ok(());
-            } else {
-                println!("need to detach from watson");
-                detach_volume(&s, &v_melbourne.id).await?;
-            }
-        }
-    } else {
-        println!("not attached at all!");
-    }
-
-    /*
-     * Attach the volume to the expected target!
-     */
-    let avr = if target == "watson" {
-        ec2::AttachVolumeRequest {
-            device: "/dev/sdf".into(),
-            instance_id: i_watson.id.clone(),
-            volume_id: v_melbourne.id.clone(),
-            ..Default::default()
-        }
-    } else if target == "melbourne" {
-        ec2::AttachVolumeRequest {
-            device: "/dev/sda1".into(),
-            instance_id: i_melbourne.id.clone(),
-            volume_id: v_melbourne.id.clone(),
-            ..Default::default()
-        }
-    } else {
-        bail!("unexpected target: {}", target);
-    };
-
-    let res = s.ec2.attach_volume(avr).await?;
-    println!("attach result: {:#?}", res);
-
-    loop {
-        let vol = get_volume(&s, VolumeLookup::ById(v_melbourne.id.clone()))
-            .await?;
-
-        println!("{:?}", vol);
-
-        if let Some(a) = &vol.attach {
-            if a.state == "attached" && vol.state == "in-use" {
-                println!("all done, attached to {}!", target);
-                return Ok(());
-            }
-        }
-
-        sleep(1000);
-    }
-}
-
-async fn register_image(s: Stuff<'_>) -> Result<()> {
-    let name = s.args.opt_str("n").unwrap();
-    let snapid = s.args.opt_str("s").unwrap();
-    let support_ena = s.args.opt_present("E");
-
-    let imageid = i_register_image(s, &name, &snapid, support_ena).await?;
-    println!("COMPLETED IMAGE ID: {}", imageid);
-
-    Ok(())
-}
-
-async fn i_register_image(s: Stuff<'_>, name: &str, snapid: &str, ena: bool)
+async fn i_register_image(s: &Stuff, name: &str, snapid: &str, ena: bool)
     -> Result<String>
 {
-    let res = s.ec2.describe_snapshots(DescribeSnapshotsRequest {
+    let res = s.ec2().describe_snapshots(DescribeSnapshotsRequest {
         snapshot_ids: Some(vec![snapid.to_string()]),
         ..Default::default()
     }).await?;
     let snap = res.snapshots.unwrap().get(0).unwrap().clone();
 
-    let res = s.ec2.register_image(RegisterImageRequest {
+    let res = s.ec2().register_image(RegisterImageRequest {
         name: name.to_string(),
         root_device_name: ss("/dev/sda1"),
         virtualization_type: ss("hvm"),
@@ -1553,7 +1510,7 @@ async fn i_register_image(s: Stuff<'_>, name: &str, snapid: &str, ena: bool)
     println!("IMAGE ID: {}", snapid);
 
     loop {
-        let res = s.ec2.describe_images(DescribeImagesRequest {
+        let res = s.ec2().describe_images(DescribeImagesRequest {
             image_ids: Some(vec![imageid.to_string()]),
             ..Default::default()
         }).await?;
@@ -1577,197 +1534,158 @@ async fn i_register_image(s: Stuff<'_>, name: &str, snapid: &str, ena: bool)
     }
 }
 
-#[derive(Copy, Clone)]
-struct Stuff<'a> {
-    s3: &'a dyn S3,
-    region_s3: &'a Region,
-    ec2: &'a dyn Ec2,
-    region_ec2: &'a Region,
-    credprov: &'a dyn ProvideAwsCredentials,
-    args: &'a getopts::Matches,
+struct Stuff {
+    region_ec2: Region,
+    region_s3: Region,
+    s3: Option<s3::S3Client>,
+    ec2: Option<ec2::Ec2Client>,
+    credprov: Option<Box<dyn ProvideAwsCredentials + Send + Sync>>,
 }
 
-type Caller<'a> = fn(Stuff<'a>)
-    -> Pin<Box<(dyn Future<Output = Result<()>> + 'a)>>;
+impl Stuff {
+    fn ec2(&self) -> &dyn Ec2 {
+        self.ec2.as_ref().unwrap()
+    }
+
+    fn s3(&self) -> &dyn S3 {
+        self.s3.as_ref().unwrap()
+    }
+
+    fn region_ec2(&self) -> &Region {
+        &self.region_ec2
+    }
+
+    fn region_s3(&self) -> &Region {
+        &self.region_s3
+    }
+
+    fn credprov(&self) -> &dyn ProvideAwsCredentials {
+        self.credprov.as_deref().unwrap()
+    }
+}
+
+async fn do_instance(mut l: Level<Stuff>) -> Result<()> {
+    l.cmda("list", "ls", "list instances", cmd!(info))?; /* XXX */
+    l.cmd("ip", "get IP address for instance", cmd!(ip))?;
+    l.cmd("start", "start an instance", cmd!(start))?;
+    l.cmd("stop", "stop an instance", cmd!(stop))?;
+    l.cmd("protect", "enable termination protection", cmd!(protect))?;
+    l.cmd("unprotect", "disable termination protection", cmd!(unprotect))?;
+    l.cmd("create", "create an instance", cmd!(create_instance))?;
+    l.cmd("destroy", "destroy an instance", cmd!(destroy))?;
+
+    sel!(l).run().await
+}
+
+async fn do_volume(mut l: Level<Stuff>) -> Result<()> {
+    l.cmda("list", "ls", "list volumes", cmd!(volumes))?; /* XXX */
+
+    sel!(l).run().await
+}
+
+async fn do_snapshot(mut l: Level<Stuff>) -> Result<()> {
+    l.cmda("list", "ls", "list snapshots", cmd!(snapshots))?; /* XXX */
+
+    sel!(l).run().await
+}
+
+async fn do_image(mut l: Level<Stuff>) -> Result<()> {
+    l.cmda("list", "ls", "list images", cmd!(images))?; /* XXX */
+    l.cmd("publish", "publish a raw file as an AMI", cmd!(ami_from_file))?;
+
+    sel!(l).run().await
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut opts = getopts::Options::new();
-    opts.parsing_style(getopts::ParsingStyle::StopAtFirstFree);
-    opts.optflag("e", "", "use environment variables for credentials");
-    opts.optopt("r", "region-ec2", "region for EC2", "REGION");
-    opts.optopt("R", "region-s3", "region for S3", "REGION");
-    opts.optflag("", "help", "print usage");
+    let mut l = Level::new("aws-wire-lengths", Stuff {
+        region_ec2: Region::default(),
+        region_s3: Region::default(),
+        ec2: None,
+        s3: None,
+        credprov: None,
+    });
 
-    fn tabular(opts: &mut getopts::Options) {
-        opts.optopt("s", "", "sort by columns (ascending)", "COLUMN,...");
-        opts.optopt("S", "", "sort by columns (descending)", "COLUMN,...");
-        opts.optopt("o", "", "select columns to display", "COLUMN,...");
-        opts.optflag("H", "", "omit header");
-    }
+    l.optflag("e", "", "use environment variables for credentials");
+    l.optopt("r", "region-ec2", "region for EC2", "REGION");
+    l.optopt("R", "region-s3", "region for S3", "REGION");
 
-    let f: Caller = match std::env::args().nth(1).as_deref() {
-        Some("start") => {
-            |s| Box::pin(start(s))
-        }
-        Some("stop") => {
-            opts.optflag("f", "", "force stop");
+    l.cmda("instance", "inst", "instance management", cmd!(do_instance))?;
+    l.cmda("volume", "vol", "volume management", cmd!(do_volume))?;
+    l.cmda("snapshot", "snap", "snapshot management", cmd!(do_snapshot))?;
+    l.cmda("image", "ami", "image (AMI) management", cmd!(do_image))?;
 
-            |s| Box::pin(stop(s))
-        }
-        Some("protect") => {
-            |s| Box::pin(protect(s, true))
-        }
-        Some("unprotect") => {
-            |s| Box::pin(protect(s, false))
-        }
-        Some("destroy") => {
-            |s| Box::pin(destroy(s))
-        }
-        Some("ip") => {
-            |s| Box::pin(ip(s))
-        }
-        Some("info") => {
-            tabular(&mut opts);
-            opts.optmulti("T", "", "specify a tag as an extra column", "TAG");
+    /*
+     * XXX These are used in some scripts, so leave them (but hidden) for now.
+     */
+    l.hcmd("ami-from-file", "COMPAT: AMI from file", cmd!(ami_from_file))?;
+    l.hcmd("everything", "COMPAT: AMI from file", cmd!(ami_from_file))?;
 
-            |s| Box::pin(info(s))
-        }
-        Some("volumes") => {
-            tabular(&mut opts);
+//  let f: Caller = match std::env::args().nth(1).as_deref() {
+//        Some("put-object") => {
+//            opts.reqopt("b", "bucket", "S3 bucket", "BUCKET");
+//            opts.reqopt("o", "object", "S3 object name", "OBJECT");
+//            opts.reqopt("f", "file", "local file to upload", "FILENAME");
+//
+//            |s| Box::pin(put_object(s))
+//        }
+//        Some("import-volume") => {
+//            opts.reqopt("b", "bucket", "S3 bucket", "BUCKET");
+//            opts.reqopt("p", "prefix", "S3 prefix", "PREFIX");
+//
+//            |s| Box::pin(import_volume(s))
+//        }
+//        Some("create-snapshot") => {
+//            opts.reqopt("v", "volume", "volume ID to snapshot", "VOLUME_ID");
+//
+//            |s| Box::pin(create_snapshot(s))
+//        }
+//        Some("register-image") => {
+//            opts.reqopt("s", "snapshot", "snapshot ID to register",
+//                "SNAPSHOT_ID");
+//            opts.reqopt("n", "name", "target image name", "NAME");
+//            opts.optflag("E", "ena", "enable ENA support");
+//
+//            |s| Box::pin(register_image(s))
+//        }
+//        cmd => bail!("invalid command {:?}", cmd),
+//    };
 
-            |s| Box::pin(volumes(s))
-        }
-        Some("snapshots") => {
-            tabular(&mut opts);
+    /*
+     * Parse arguments and select which command we will be running.
+     */
+    let mut s = sel!(l);
 
-            |s| Box::pin(snapshots(s))
-        }
-        Some("images") => {
-            tabular(&mut opts);
-
-            |s| Box::pin(images(s))
-        }
-        Some("melbourne") => {
-            opts.reqopt("t", "target", "target VM name", "NAME");
-
-            |s| Box::pin(melbourne(s))
-        }
-        Some("create") => {
-            opts.optopt("n", "name", "instance name", "NAME");
-            opts.optopt("i", "image", "image (AMI)", "AMI_ID");
-            opts.optopt("t", "type", "instance type", "TYPE");
-            opts.optopt("k", "key", "SSH key name", "KEY_NAME");
-            opts.optopt("s", "sg", "security group ID", "SG_ID");
-            opts.optopt("S", "subnet", "subnet ID", "SUBNET_ID");
-            opts.optopt("u", "userdata", "userdata (in plain text)", "DATA");
-            opts.optopt("d", "disksize", "root disk size (GB)", "GIGABYTES");
-            opts.optopt("f", "file", "defaults TOML file to use", "PATH");
-            opts.optflag("p", "public-ip", "request a public IP");
-
-            |s| Box::pin(create_instance(s))
-        }
-        Some("everything") | Some("ami-from-file") => {
-            opts.reqopt("b", "bucket", "S3 bucket", "BUCKET");
-            opts.optopt("p", "prefix", "S3 prefix", "PREFIX");
-            opts.reqopt("n", "name", "target image name", "NAME");
-            opts.optflag("E", "ena", "enable ENA support");
-            opts.reqopt("f", "file", "local file to upload", "FILENAME");
-
-            |s| Box::pin(ami_from_file(s))
-        }
-        Some("put-object") => {
-            opts.reqopt("b", "bucket", "S3 bucket", "BUCKET");
-            opts.reqopt("o", "object", "S3 object name", "OBJECT");
-            opts.reqopt("f", "file", "local file to upload", "FILENAME");
-
-            |s| Box::pin(put_object(s))
-        }
-        Some("import-volume") => {
-            opts.reqopt("b", "bucket", "S3 bucket", "BUCKET");
-            opts.reqopt("p", "prefix", "S3 prefix", "PREFIX");
-
-            |s| Box::pin(import_volume(s))
-        }
-        Some("create-snapshot") => {
-            opts.reqopt("v", "volume", "volume ID to snapshot", "VOLUME_ID");
-
-            |s| Box::pin(create_snapshot(s))
-        }
-        Some("register-image") => {
-            opts.reqopt("s", "snapshot", "snapshot ID to register",
-                "SNAPSHOT_ID");
-            opts.reqopt("n", "name", "target image name", "NAME");
-            opts.optflag("E", "ena", "enable ENA support");
-
-            |s| Box::pin(register_image(s))
-        }
-        cmd => bail!("invalid command {:?}", cmd),
-    };
-
-    let usage = || {
-        let prog = std::env::args().nth(0).as_deref().unwrap().to_string();
-        let cmd = std::env::args().nth(1).as_deref().unwrap().to_string();
-        opts.usage(&format!("usage: {} {} OPTIONS", prog, cmd))
-    };
-
-    let args = match opts.parse(std::env::args().skip(2)) {
-        Ok(args) => args,
-        Err(e) => {
-            eprintln!("{}", usage());
-            eprintln!("ERROR: {}", e);
-            std::process::exit(1);
-        }
-    };
-
-    if args.opt_present("help") {
-        println!("{}", usage());
-        std::process::exit(0);
-    }
-
-    let credprov: Box<dyn ProvideAwsCredentials> = if args.opt_present("e") {
+    s.context_mut().credprov = Some(if s.opts().opt_present("e") {
         Box::new(EnvironmentProvider::default())
     } else {
         Box::new(DefaultCredentialsProvider::new()?)
+    });
+
+    if let Some(reg) = s.opts().opt_str("region-s3").as_deref() {
+        s.context_mut().region_s3 = Region::from_str(reg).context("invalid S3 region")?;
+    };
+    if let Some(reg) = s.opts().opt_str("region-ec2").as_deref() {
+        s.context_mut().region_ec2 = Region::from_str(reg).context("invalid EC2 region")?;
     };
 
-    let region_s3 = if let Some(reg) = args.opt_str("region-s3").as_deref() {
-        Region::from_str(reg).context("invalid S3 region")?
-    } else {
-        Region::default()
-    };
-    let region_ec2 = if let Some(reg) = args.opt_str("region-ec2").as_deref() {
-        Region::from_str(reg).context("invalid EC2 region")?
-    } else {
-        Region::default()
-    };
-
-    let (s3, ec2) = if args.opt_present("e") {
-        let s3 = S3Client::new_with(HttpClient::new()?,
+    if s.opts().opt_present("e") {
+        let mut stuff = s.context_mut();
+        stuff.s3 = Some(S3Client::new_with(HttpClient::new()?,
             EnvironmentProvider::default(),
-            region_s3.clone());
-        let ec2 = Ec2Client::new_with(HttpClient::new()?,
+            stuff.region_s3.clone()));
+        stuff.ec2 = Some(Ec2Client::new_with(HttpClient::new()?,
             EnvironmentProvider::default(),
-            region_ec2.clone());
-        (s3, ec2)
+            stuff.region_ec2.clone()));
     } else {
-        let s3 = S3Client::new_with(HttpClient::new()?,
+        let mut stuff = s.context_mut();
+        stuff.s3 = Some(S3Client::new_with(HttpClient::new()?,
             DefaultCredentialsProvider::new()?,
-            region_s3.clone());
-        let ec2 = Ec2Client::new_with(HttpClient::new()?,
+            stuff.region_s3.clone()));
+        stuff.ec2 = Some(Ec2Client::new_with(HttpClient::new()?,
             DefaultCredentialsProvider::new()?,
-            region_ec2.clone());
-        (s3, ec2)
+            stuff.region_ec2.clone()));
     };
 
-    f(Stuff {
-        s3: &s3,
-        region_s3: &region_s3,
-        ec2: &ec2,
-        region_ec2: &region_ec2,
-        credprov: credprov.as_ref(),
-        args: &args,
-    }).await?;
-
-    Ok(())
+    s.run().await
 }
