@@ -24,3 +24,24 @@ Options:
 
 ERROR: choose a command
 ```
+
+```
+$ aws-wire-lengths inst
+Usage: aws-wire-lengths instance COMMAND [OPTS] [ARGS...]
+
+Commands:
+    list (ls)           list instances
+    ip                  get IP address for instance
+    start               start an instance
+    stop                stop an instance
+    protect             enable termination protection
+    unprotect           disable termination protection
+    create              create an instance
+    destroy             destroy an instance
+
+
+Options:
+    --help              usage information
+
+ERROR: choose a command
+```
