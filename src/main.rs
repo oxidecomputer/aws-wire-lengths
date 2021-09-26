@@ -2,59 +2,38 @@
  * Copyright 2021 Oxide Computer Company
  */
 
-use rusoto_core::{Region, HttpClient};
-use rusoto_core::signature::SignedRequest;
-use rusoto_core::param::Params;
-use rusoto_ec2 as ec2;
-use ec2::{
-    Ec2,
-    Ec2Client,
-    ImportVolumeRequest,
-    DescribeConversionTasksRequest,
-    DiskImageDetail,
-    VolumeDetail,
-    CreateSnapshotRequest,
-    DescribeSnapshotsRequest,
-    RegisterImageRequest,
-    BlockDeviceMapping,
-    EbsBlockDevice,
-    DescribeImagesRequest,
-    Tag,
-    RunInstancesRequest,
-    TagSpecification,
-    InstanceNetworkInterfaceSpecification,
-};
-use rusoto_s3 as s3;
-use s3::{
-    S3,
-    S3Client,
-    HeadObjectRequest,
-    GetObjectRequest,
-    PutObjectRequest,
-    DeleteObjectRequest,
-    UploadPartRequest,
-    CreateMultipartUploadRequest,
-    CompleteMultipartUploadRequest,
-    CompletedMultipartUpload,
-    CompletedPart,
-};
-use rusoto_s3::util::{PreSignedRequest, PreSignedRequestOption};
-use rusoto_credential::{
-    EnvironmentProvider,
-    DefaultCredentialsProvider,
-    ProvideAwsCredentials
-};
-use anyhow::{anyhow, bail, Result, Context};
-use xml::writer::{EventWriter, EmitterConfig, XmlEvent};
-use std::io::{Read, Write};
-use std::time::Duration;
-use std::fs::File;
-use std::collections::HashMap;
+use anyhow::{anyhow, bail, Context, Result};
 use bytes::BytesMut;
-use rand::{thread_rng, Rng};
-use rand::distributions::Alphanumeric;
-use std::str::FromStr;
+use ec2::{
+    BlockDeviceMapping, CreateSnapshotRequest, DescribeConversionTasksRequest,
+    DescribeImagesRequest, DescribeSnapshotsRequest, DiskImageDetail,
+    EbsBlockDevice, Ec2, Ec2Client, ImportVolumeRequest,
+    InstanceNetworkInterfaceSpecification, RegisterImageRequest,
+    RunInstancesRequest, Tag, TagSpecification, VolumeDetail,
+};
 use hiercmd::prelude::*;
+use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
+use rusoto_core::param::Params;
+use rusoto_core::signature::SignedRequest;
+use rusoto_core::{HttpClient, Region};
+use rusoto_credential::{
+    DefaultCredentialsProvider, EnvironmentProvider, ProvideAwsCredentials,
+};
+use rusoto_ec2 as ec2;
+use rusoto_s3 as s3;
+use rusoto_s3::util::{PreSignedRequest, PreSignedRequestOption};
+use s3::{
+    CompleteMultipartUploadRequest, CompletedMultipartUpload, CompletedPart,
+    CreateMultipartUploadRequest, DeleteObjectRequest, GetObjectRequest,
+    HeadObjectRequest, PutObjectRequest, S3Client, UploadPartRequest, S3,
+};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{Read, Write};
+use std::str::FromStr;
+use std::time::Duration;
+use xml::writer::{EmitterConfig, EventWriter, XmlEvent};
 
 trait RowExt {
     fn add_stror(&mut self, n: &str, v: &Option<String>, def: &str);
@@ -103,23 +82,33 @@ impl<T: Write> EventWriterExt for EventWriter<T> {
     }
 }
 
-async fn sign_delete(c: &dyn ProvideAwsCredentials, r: &Region, b: &str,
-    k: &str)
-    -> Result<String>
-{
+async fn sign_delete(
+    c: &dyn ProvideAwsCredentials,
+    r: &Region,
+    b: &str,
+    k: &str,
+) -> Result<String> {
     let creds = c.credentials().await?;
     Ok(DeleteObjectRequest {
         bucket: b.to_string(),
         key: k.to_string(),
         ..Default::default()
-    }.get_presigned_url(r, &creds, &PreSignedRequestOption {
-        expires_in: Duration::from_secs(3600)
-    }))
+    }
+    .get_presigned_url(
+        r,
+        &creds,
+        &PreSignedRequestOption {
+            expires_in: Duration::from_secs(3600),
+        },
+    ))
 }
 
-async fn sign_head(c: &dyn ProvideAwsCredentials, r: &Region, b: &str, k: &str)
-    -> Result<String>
-{
+async fn sign_head(
+    c: &dyn ProvideAwsCredentials,
+    r: &Region,
+    b: &str,
+    k: &str,
+) -> Result<String> {
     let creds = c.credentials().await?;
     let uri = format!("/{}/{}", b, k);
     let mut req = SignedRequest::new("HEAD", "s3", r, &uri);
@@ -131,17 +120,25 @@ async fn sign_head(c: &dyn ProvideAwsCredentials, r: &Region, b: &str, k: &str)
     Ok(req.generate_presigned_url(&creds, &expires_in, false))
 }
 
-async fn sign_get(c: &dyn ProvideAwsCredentials, r: &Region, b: &str, k: &str)
-    -> Result<String>
-{
+async fn sign_get(
+    c: &dyn ProvideAwsCredentials,
+    r: &Region,
+    b: &str,
+    k: &str,
+) -> Result<String> {
     let creds = c.credentials().await?;
     Ok(GetObjectRequest {
         bucket: b.to_string(),
         key: k.to_string(),
         ..Default::default()
-    }.get_presigned_url(r, &creds, &PreSignedRequestOption {
-        expires_in: Duration::from_secs(300)
-    }))
+    }
+    .get_presigned_url(
+        r,
+        &creds,
+        &PreSignedRequestOption {
+            expires_in: Duration::from_secs(300),
+        },
+    ))
 }
 
 // async fn put_object(mut l: Level<Stuff>) -> Result<()> {
@@ -153,16 +150,22 @@ async fn sign_get(c: &dyn ProvideAwsCredentials, r: &Region, b: &str, k: &str)
 //     Ok(())
 // }
 
-async fn i_put_object(s: &Stuff, bucket: &str, object: &str, file: &str)
-    -> Result<()>
-{
+async fn i_put_object(
+    s: &Stuff,
+    bucket: &str,
+    object: &str,
+    file: &str,
+) -> Result<()> {
     let mut f = File::open(&file)?;
 
-    let res = s.s3().create_multipart_upload(CreateMultipartUploadRequest {
-        bucket: bucket.to_string(),
-        key: object.to_string(),
-        ..Default::default()
-    }).await?;
+    let res = s
+        .s3()
+        .create_multipart_upload(CreateMultipartUploadRequest {
+            bucket: bucket.to_string(),
+            key: object.to_string(),
+            ..Default::default()
+        })
+        .await?;
     let upload_id = res.upload_id.as_deref().unwrap();
 
     println!("upload ID {} ...", upload_id);
@@ -188,35 +191,40 @@ async fn i_put_object(s: &Stuff, bucket: &str, object: &str, file: &str)
         let se = futures::stream::once(async { Ok(froz) });
         let body = Some(rusoto_s3::StreamingBody::new(se));
 
-        let res = s.s3().upload_part(UploadPartRequest {
-            body,
-            content_length: Some(sz as i64),
-            upload_id: upload_id.to_string(),
-            key: object.to_string(),
-            bucket: bucket.to_string(),
-            part_number,
-            ..Default::default()
-        }).await?;
+        let res = s
+            .s3()
+            .upload_part(UploadPartRequest {
+                body,
+                content_length: Some(sz as i64),
+                upload_id: upload_id.to_string(),
+                key: object.to_string(),
+                bucket: bucket.to_string(),
+                part_number,
+                ..Default::default()
+            })
+            .await?;
 
         let etag = res.e_tag.expect("etag");
         println!("    part {} etag {}", part_number, etag);
         parts.push(CompletedPart {
             part_number: Some(part_number),
-            e_tag: Some(etag)
+            e_tag: Some(etag),
         });
     }
 
     println!("uploaded {} chunks, total size {}", parts.len(), total_size);
 
-    s.s3().complete_multipart_upload(CompleteMultipartUploadRequest {
-        bucket: bucket.to_string(),
-        key: object.to_string(),
-        upload_id: upload_id.to_string(),
-        multipart_upload: Some(CompletedMultipartUpload {
-            parts: Some(parts),
-        }),
-        ..Default::default()
-    }).await?;
+    s.s3()
+        .complete_multipart_upload(CompleteMultipartUploadRequest {
+            bucket: bucket.to_string(),
+            key: object.to_string(),
+            upload_id: upload_id.to_string(),
+            multipart_upload: Some(CompletedMultipartUpload {
+                parts: Some(parts),
+            }),
+            ..Default::default()
+        })
+        .await?;
 
     println!("upload ok!");
     Ok(())
@@ -246,11 +254,13 @@ async fn image_size(s3: &dyn S3, b: &str, k: &str) -> Result<ImageSizes> {
     /*
      * Get size of uploaded object.
      */
-    let ikh = s3.head_object(HeadObjectRequest {
-        bucket: b.to_string(),
-        key: k.to_string(),
-        ..Default::default()
-    }).await?;
+    let ikh = s3
+        .head_object(HeadObjectRequest {
+            bucket: b.to_string(),
+            key: k.to_string(),
+            ..Default::default()
+        })
+        .await?;
 
     /*
      * We need the size in bytes, as well as the size in GiB rounded up to the
@@ -275,9 +285,12 @@ async fn image_size(s3: &dyn S3, b: &str, k: &str) -> Result<ImageSizes> {
 //     Ok(())
 // }
 
-async fn i_import_volume(s: &Stuff, bkt: &str, kimage: &str, kmanifest: &str)
-    -> Result<String>
-{
+async fn i_import_volume(
+    s: &Stuff,
+    bkt: &str,
+    kimage: &str,
+    kmanifest: &str,
+) -> Result<String> {
     let sz = image_size(s.s3(), bkt, kimage).await?;
     println!("  IMAGE SIZE: {:?}", sz);
 
@@ -300,8 +313,10 @@ async fn i_import_volume(s: &Stuff, bkt: &str, kimage: &str, kmanifest: &str)
     w.simple_tag("release", "2020-08-06")?;
     w.write(XmlEvent::end_element())?;
 
-    w.simple_tag("self-destruct-url",
-        &sign_delete(s.credprov(), s.region_s3(), bkt, kmanifest).await?)?;
+    w.simple_tag(
+        "self-destruct-url",
+        &sign_delete(s.credprov(), s.region_s3(), bkt, kmanifest).await?,
+    )?;
 
     w.write(XmlEvent::start_element("import"))?;
 
@@ -310,17 +325,25 @@ async fn i_import_volume(s: &Stuff, bkt: &str, kimage: &str, kmanifest: &str)
     w.write(XmlEvent::start_element("parts").attr("count", "1"))?;
 
     w.write(XmlEvent::start_element("part").attr("index", "0"))?;
-    w.write(XmlEvent::start_element("byte-range")
-        .attr("start", "0")
-        .attr("end", &sz.end()))?;
+    w.write(
+        XmlEvent::start_element("byte-range")
+            .attr("start", "0")
+            .attr("end", &sz.end()),
+    )?;
     w.write(XmlEvent::end_element())?; /* byte-range */
     w.simple_tag("key", kimage)?;
-    w.simple_tag("head-url", &sign_head(s.credprov(), s.region_s3(), bkt, kimage)
-        .await?)?;
-    w.simple_tag("get-url", &sign_get(s.credprov(), s.region_s3(), bkt, kimage)
-        .await?)?;
-    w.simple_tag("delete-url", &sign_delete(s.credprov(), s.region_s3(), bkt,
-        kimage).await?)?;
+    w.simple_tag(
+        "head-url",
+        &sign_head(s.credprov(), s.region_s3(), bkt, kimage).await?,
+    )?;
+    w.simple_tag(
+        "get-url",
+        &sign_get(s.credprov(), s.region_s3(), bkt, kimage).await?,
+    )?;
+    w.simple_tag(
+        "delete-url",
+        &sign_delete(s.credprov(), s.region_s3(), bkt, kimage).await?,
+    )?;
     w.write(XmlEvent::end_element())?; /* part */
 
     w.write(XmlEvent::end_element())?; /* parts */
@@ -346,21 +369,22 @@ async fn i_import_volume(s: &Stuff, bkt: &str, kimage: &str, kmanifest: &str)
     println!("importing volume...");
 
     let availability_zone = s.region_ec2().name().to_string() + "a";
-    let import_manifest_url = sign_get(s.credprov(), s.region_s3(), bkt,
-        kmanifest).await?;
-    let res = s.ec2().import_volume(ImportVolumeRequest {
-        availability_zone,
-        dry_run: Some(false),
-        image: DiskImageDetail {
-            format: "RAW".to_string(),
-            import_manifest_url,
-            bytes: sz.bytes,
-        },
-        volume: VolumeDetail {
-            size: sz.gb,
-        },
-        description: None,
-    }).await?;
+    let import_manifest_url =
+        sign_get(s.credprov(), s.region_s3(), bkt, kmanifest).await?;
+    let res = s
+        .ec2()
+        .import_volume(ImportVolumeRequest {
+            availability_zone,
+            dry_run: Some(false),
+            image: DiskImageDetail {
+                format: "RAW".to_string(),
+                import_manifest_url,
+                bytes: sz.bytes,
+            },
+            volume: VolumeDetail { size: sz.gb },
+            description: None,
+        })
+        .await?;
 
     println!("res: {:#?}", res);
 
@@ -448,10 +472,13 @@ async fn i_import_volume(s: &Stuff, bkt: &str, kimage: &str, kmanifest: &str)
 // }
 
 async fn i_create_snapshot(s: &Stuff, volid: &str) -> Result<String> {
-    let res = s.ec2().create_snapshot(CreateSnapshotRequest {
-        volume_id: volid.to_string(),
-        ..Default::default()
-    }).await?;
+    let res = s
+        .ec2()
+        .create_snapshot(CreateSnapshotRequest {
+            volume_id: volid.to_string(),
+            ..Default::default()
+        })
+        .await?;
 
     println!("res: {:#?}", res);
 
@@ -459,10 +486,13 @@ async fn i_create_snapshot(s: &Stuff, volid: &str) -> Result<String> {
     println!("SNAPSHOT ID: {}", snapid);
 
     loop {
-        let res = s.ec2().describe_snapshots(DescribeSnapshotsRequest {
-            snapshot_ids: Some(vec![snapid.clone()]),
-            ..Default::default()
-        }).await?;
+        let res = s
+            .ec2()
+            .describe_snapshots(DescribeSnapshotsRequest {
+                snapshot_ids: Some(vec![snapid.clone()]),
+                ..Default::default()
+            })
+            .await?;
 
         let snapshots = res.snapshots.as_ref().unwrap();
 
@@ -521,9 +551,7 @@ struct InstanceOptions {
     public_ip: Option<bool>,
 }
 
-async fn i_create_instance(s: &Stuff, io: &InstanceOptions)
-    -> Result<String>
-{
+async fn i_create_instance(s: &Stuff, io: &InstanceOptions) -> Result<String> {
     let tag_specifications = if !io.tags.is_empty() {
         let mut tags = Vec::new();
         for (k, v) in io.tags.iter() {
@@ -547,27 +575,21 @@ async fn i_create_instance(s: &Stuff, io: &InstanceOptions)
         min_count: 1,
         max_count: 1,
         tag_specifications,
-        block_device_mappings: Some(vec![
-            BlockDeviceMapping {
-                device_name: ss("/dev/sda1"),
-                ebs: Some(EbsBlockDevice {
-                    volume_size: Some(io.root_size_gb as i64),
-                    ..Default::default()
-                }),
+        block_device_mappings: Some(vec![BlockDeviceMapping {
+            device_name: ss("/dev/sda1"),
+            ebs: Some(EbsBlockDevice {
+                volume_size: Some(io.root_size_gb as i64),
                 ..Default::default()
-            },
-        ]),
-        network_interfaces: Some(vec![
-            InstanceNetworkInterfaceSpecification {
-                device_index: Some(0),
-                subnet_id: ss(&io.subnet_id),
-                groups: Some(vec![
-                    io.sg_id.to_string(),
-                ]),
-                associate_public_ip_address: io.public_ip,
-                ..Default::default()
-            },
-        ]),
+            }),
+            ..Default::default()
+        }]),
+        network_interfaces: Some(vec![InstanceNetworkInterfaceSpecification {
+            device_index: Some(0),
+            subnet_id: ss(&io.subnet_id),
+            groups: Some(vec![io.sg_id.to_string()]),
+            associate_public_ip_address: io.public_ip,
+            ..Default::default()
+        }]),
         user_data: io.user_data.as_deref().map(base64::encode),
         ..Default::default()
     };
@@ -696,7 +718,8 @@ async fn ami_from_file(mut l: Level<Stuff>) -> Result<()> {
     println!("COMPLETED UPLOAD");
 
     println!("IMPORTING VOLUME:");
-    let volid = i_import_volume(l.context(), &bucket, &kimage, &kmanifest).await?;
+    let volid =
+        i_import_volume(l.context(), &bucket, &kimage, &kmanifest).await?;
     println!("COMPLETED VOLUME ID: {}", volid);
 
     println!("CREATING SNAPSHOT:");
@@ -704,7 +727,8 @@ async fn ami_from_file(mut l: Level<Stuff>) -> Result<()> {
     println!("COMPLETED SNAPSHOT ID: {}", snapid);
 
     println!("REGISTERING IMAGE:");
-    let ami = i_register_image(l.context(), &name, &snapid, support_ena).await?;
+    let ami =
+        i_register_image(l.context(), &name, &snapid, support_ena).await?;
     println!("COMPLETED IMAGE ID: {}", ami);
 
     /*
@@ -771,10 +795,13 @@ async fn detach_volume(s: &Stuff, id: &str) -> Result<()> {
             println!("    attach: {:?}", a);
 
             if !detached {
-                let res = s.ec2().detach_volume(ec2::DetachVolumeRequest {
-                    volume_id: vol.id.clone(),
-                    ..Default::default()
-                }).await?;
+                let res = s
+                    .ec2()
+                    .detach_volume(ec2::DetachVolumeRequest {
+                        volume_id: vol.id.clone(),
+                        ..Default::default()
+                    })
+                    .await?;
 
                 println!("    {:#?}", res);
                 detached = true;
@@ -815,10 +842,13 @@ async fn start_instance(s: &Stuff, id: &str) -> Result<()> {
 
         if shouldstart && !started {
             println!("    starting...");
-            let res = s.ec2().start_instances(ec2::StartInstancesRequest {
-                instance_ids: vec![id.to_string()],
-                ..Default::default()
-            }).await?;
+            let res = s
+                .ec2()
+                .start_instances(ec2::StartInstancesRequest {
+                    instance_ids: vec![id.to_string()],
+                    ..Default::default()
+                })
+                .await?;
             println!("    {:#?}", res);
             started = true;
         }
@@ -830,11 +860,7 @@ async fn start_instance(s: &Stuff, id: &str) -> Result<()> {
 async fn stop_instance(s: &Stuff, id: &str, force: bool) -> Result<()> {
     let lookup = InstanceLookup::ById(id.to_string());
 
-    let pfx = if force {
-        "force "
-    } else {
-        ""
-    };
+    let pfx = if force { "force " } else { "" };
 
     println!("{}stopping instance {}...", pfx, id);
 
@@ -860,11 +886,14 @@ async fn stop_instance(s: &Stuff, id: &str, force: bool) -> Result<()> {
 
         if shouldstop && !stopped {
             println!("    {}stopping...", pfx);
-            let res = s.ec2().stop_instances(ec2::StopInstancesRequest {
-                instance_ids: vec![id.to_string()],
-                force: Some(force),
-                ..Default::default()
-            }).await?;
+            let res = s
+                .ec2()
+                .stop_instances(ec2::StopInstancesRequest {
+                    instance_ids: vec![id.to_string()],
+                    force: Some(force),
+                    ..Default::default()
+                })
+                .await?;
             println!("    {:#?}", res);
             stopped = true;
         }
@@ -876,16 +905,15 @@ async fn stop_instance(s: &Stuff, id: &str, force: bool) -> Result<()> {
 async fn protect_instance(s: &Stuff, id: &str, prot: bool) -> Result<()> {
     println!("setting protect to {} on instance {}...", prot, id);
 
-    let val = ec2::AttributeBooleanValue {
-        value: Some(prot),
-    };
+    let val = ec2::AttributeBooleanValue { value: Some(prot) };
 
-    s.ec2().modify_instance_attribute(
-        ec2::ModifyInstanceAttributeRequest {
+    s.ec2()
+        .modify_instance_attribute(ec2::ModifyInstanceAttributeRequest {
             instance_id: id.to_string(),
             disable_api_termination: Some(val),
             ..Default::default()
-        }).await?;
+        })
+        .await?;
 
     Ok(())
 }
@@ -917,10 +945,13 @@ async fn destroy_instance(s: &Stuff, id: &str) -> Result<()> {
 
         if shouldterminate && !terminated {
             println!("    terminating...");
-            let res = s.ec2().terminate_instances(ec2::TerminateInstancesRequest {
-                instance_ids: vec![id.to_string()],
-                ..Default::default()
-            }).await?;
+            let res = s
+                .ec2()
+                .terminate_instances(ec2::TerminateInstancesRequest {
+                    instance_ids: vec![id.to_string()],
+                    ..Default::default()
+                })
+                .await?;
             println!("    {:#?}", res);
             terminated = true;
         }
@@ -932,24 +963,23 @@ async fn destroy_instance(s: &Stuff, id: &str) -> Result<()> {
 #[allow(dead_code)]
 async fn get_volume(s: &Stuff, lookup: VolumeLookup) -> Result<Volume> {
     let filters = match &lookup {
-        VolumeLookup::ById(id) => Some(vec![
-            ec2::Filter {
-                name: Some("volume-id".into()),
-                values: Some(vec![id.into()]),
-            },
-        ]),
-        VolumeLookup::ByName(name) => Some(vec![
-            ec2::Filter {
-                name: Some("tag:Name".into()),
-                values: Some(vec![name.into()]),
-            },
-        ]),
+        VolumeLookup::ById(id) => Some(vec![ec2::Filter {
+            name: Some("volume-id".into()),
+            values: Some(vec![id.into()]),
+        }]),
+        VolumeLookup::ByName(name) => Some(vec![ec2::Filter {
+            name: Some("tag:Name".into()),
+            values: Some(vec![name.into()]),
+        }]),
     };
 
-    let res = s.ec2().describe_volumes(ec2::DescribeVolumesRequest {
-        filters,
-        ..Default::default()
-    }).await?;
+    let res = s
+        .ec2()
+        .describe_volumes(ec2::DescribeVolumesRequest {
+            filters,
+            ..Default::default()
+        })
+        .await?;
 
     let mut out: Vec<Volume> = Vec::new();
 
@@ -958,7 +988,8 @@ async fn get_volume(s: &Stuff, lookup: VolumeLookup) -> Result<Volume> {
          * Find the name tag value:
          */
         let tags = vol.tags.as_ref().unwrap();
-        let nametag = tags.iter()
+        let nametag = tags
+            .iter()
             .find(|t| t.key.as_deref() == Some("Name"))
             .and_then(|t| t.value.as_deref());
 
@@ -966,9 +997,7 @@ async fn get_volume(s: &Stuff, lookup: VolumeLookup) -> Result<Volume> {
             VolumeLookup::ById(id) => {
                 id.as_str() == vol.volume_id.as_deref().unwrap()
             }
-            VolumeLookup::ByName(name) => {
-                Some(name.as_str()) == nametag
-            }
+            VolumeLookup::ByName(name) => Some(name.as_str()) == nametag,
         };
 
         if mat {
@@ -977,14 +1006,20 @@ async fn get_volume(s: &Stuff, lookup: VolumeLookup) -> Result<Volume> {
              */
             let attach = if let Some(att) = vol.attachments.as_ref() {
                 if att.len() > 1 {
-                    bail!("matching volume has {} attachments: {:#?}",
-                        att.len(), vol);
+                    bail!(
+                        "matching volume has {} attachments: {:#?}",
+                        att.len(),
+                        vol
+                    );
                 } else if att.len() == 1 {
                     let a = att.get(0).unwrap();
                     Some(Attach {
                         state: a.state.as_deref().unwrap().to_string(),
-                        instance_id: a.instance_id.as_deref()
-                            .unwrap().to_string(),
+                        instance_id: a
+                            .instance_id
+                            .as_deref()
+                            .unwrap()
+                            .to_string(),
                     })
                 } else {
                     None
@@ -1013,9 +1048,7 @@ async fn get_volume(s: &Stuff, lookup: VolumeLookup) -> Result<Volume> {
     Ok(out.pop().unwrap())
 }
 
-async fn get_instance_fuzzy(s: &Stuff, lookuparg: &str)
-    -> Result<Instance>
-{
+async fn get_instance_fuzzy(s: &Stuff, lookuparg: &str) -> Result<Instance> {
     let lookup = if lookuparg.starts_with("i-") {
         InstanceLookup::ById(lookuparg.to_string())
     } else {
@@ -1025,34 +1058,33 @@ async fn get_instance_fuzzy(s: &Stuff, lookuparg: &str)
     Ok(get_instance_x(s, lookup, true).await?)
 }
 
-async fn get_instance(s: &Stuff, lookup: InstanceLookup)
-    -> Result<Instance>
-{
+async fn get_instance(s: &Stuff, lookup: InstanceLookup) -> Result<Instance> {
     Ok(get_instance_x(s, lookup, false).await?)
 }
 
-async fn get_instance_x(s: &Stuff, lookup: InstanceLookup, ignoreterm: bool)
-    -> Result<Instance>
-{
+async fn get_instance_x(
+    s: &Stuff,
+    lookup: InstanceLookup,
+    ignoreterm: bool,
+) -> Result<Instance> {
     let filters = match &lookup {
-        InstanceLookup::ById(id) => Some(vec![
-            ec2::Filter {
-                name: Some("instance-id".into()),
-                values: Some(vec![id.into()]),
-            },
-        ]),
-        InstanceLookup::ByName(name) => Some(vec![
-            ec2::Filter {
-                name: Some("tag:Name".into()),
-                values: Some(vec![name.into()]),
-            },
-        ]),
+        InstanceLookup::ById(id) => Some(vec![ec2::Filter {
+            name: Some("instance-id".into()),
+            values: Some(vec![id.into()]),
+        }]),
+        InstanceLookup::ByName(name) => Some(vec![ec2::Filter {
+            name: Some("tag:Name".into()),
+            values: Some(vec![name.into()]),
+        }]),
     };
 
-    let res = s.ec2().describe_instances(ec2::DescribeInstancesRequest {
-        filters,
-        ..Default::default()
-    }).await?;
+    let res = s
+        .ec2()
+        .describe_instances(ec2::DescribeInstancesRequest {
+            filters,
+            ..Default::default()
+        })
+        .await?;
 
     let mut out: Vec<Instance> = Vec::new();
 
@@ -1084,8 +1116,14 @@ async fn get_instance_x(s: &Stuff, lookup: InstanceLookup, ignoreterm: bool)
                     name: nametag,
                     id: inst.instance_id.as_deref().unwrap().to_string(),
                     ip: inst.public_ip_address.clone(),
-                    state: inst.state.as_ref().unwrap()
-                        .name.as_deref().unwrap().to_string(),
+                    state: inst
+                        .state
+                        .as_ref()
+                        .unwrap()
+                        .name
+                        .as_deref()
+                        .unwrap()
+                        .to_string(),
                     launch: inst.launch_time.as_deref().unwrap().to_string(),
                 });
             }
@@ -1097,7 +1135,11 @@ async fn get_instance_x(s: &Stuff, lookup: InstanceLookup, ignoreterm: bool)
     }
 
     if out.len() > 1 {
-        bail!("found too many instances that match {:?}: {:#?}", lookup, out);
+        bail!(
+            "found too many instances that match {:?}: {:#?}",
+            lookup,
+            out
+        );
     }
 
     Ok(out.pop().unwrap())
@@ -1116,10 +1158,13 @@ async fn snapshots(mut l: Level<Stuff>) -> Result<()> {
     let mut t = a.table();
     let s = l.context();
 
-    let res = s.ec2().describe_snapshots(ec2::DescribeSnapshotsRequest {
-        owner_ids: Some(vec!["self".to_string()]),
-        ..Default::default()
-    }).await?;
+    let res = s
+        .ec2()
+        .describe_snapshots(ec2::DescribeSnapshotsRequest {
+            owner_ids: Some(vec!["self".to_string()]),
+            ..Default::default()
+        })
+        .await?;
 
     let x = Vec::new();
     for s in res.snapshots.as_ref().unwrap_or(&x) {
@@ -1155,9 +1200,12 @@ async fn volumes(mut l: Level<Stuff>) -> Result<()> {
     let mut t = a.table();
     let s = l.context();
 
-    let res = s.ec2().describe_volumes(ec2::DescribeVolumesRequest {
-        ..Default::default()
-    }).await?;
+    let res = s
+        .ec2()
+        .describe_volumes(ec2::DescribeVolumesRequest {
+            ..Default::default()
+        })
+        .await?;
 
     let x = Vec::new();
     for v in res.volumes.as_ref().unwrap_or(&x) {
@@ -1174,8 +1222,8 @@ async fn volumes(mut l: Level<Stuff>) -> Result<()> {
             let a = atts.iter().next().unwrap();
 
             if let Some(aid) = a.instance_id.as_deref() {
-                let ai = get_instance(s,
-                    InstanceLookup::ById(aid.to_string())).await?;
+                let ai = get_instance(s, InstanceLookup::ById(aid.to_string()))
+                    .await?;
 
                 if let Some(n) = ai.name.as_deref() {
                     format!("A: {}", n)
@@ -1205,7 +1253,6 @@ async fn volumes(mut l: Level<Stuff>) -> Result<()> {
     Ok(())
 }
 
-
 async fn images(mut l: Level<Stuff>) -> Result<()> {
     l.add_column("id", 21, true);
     l.add_column("name", 24, true);
@@ -1217,10 +1264,13 @@ async fn images(mut l: Level<Stuff>) -> Result<()> {
     let mut t = a.table();
     let s = l.context();
 
-    let res = s.ec2().describe_images(ec2::DescribeImagesRequest {
-        owners: Some(vec!["self".to_string()]),
-        ..Default::default()
-    }).await?;
+    let res = s
+        .ec2()
+        .describe_images(ec2::DescribeImagesRequest {
+            owners: Some(vec!["self".to_string()]),
+            ..Default::default()
+        })
+        .await?;
 
     let x = Vec::new();
     for i in res.images.as_ref().unwrap_or(&x) {
@@ -1313,9 +1363,12 @@ async fn info(mut l: Level<Stuff>) -> Result<()> {
     } else {
         let s = l.context();
 
-        let res = s.ec2().describe_instances(ec2::DescribeInstancesRequest {
-            ..Default::default()
-        }).await?;
+        let res = s
+            .ec2()
+            .describe_instances(ec2::DescribeInstancesRequest {
+                ..Default::default()
+            })
+            .await?;
 
         if let Some(r) = &res.reservations {
             for r in r.iter() {
@@ -1331,8 +1384,10 @@ async fn info(mut l: Level<Stuff>) -> Result<()> {
                         r.add_stror("name", &i.tags.tag("Name"), "-");
                         r.add_str("launch", i.launch_time.as_deref().unwrap());
                         r.add_str("ip", pubip.unwrap_or(privip.unwrap_or("-")));
-                        r.add_str("state", i.state.as_ref().unwrap()
-                            .name.as_deref().unwrap());
+                        r.add_str(
+                            "state",
+                            i.state.as_ref().unwrap().name.as_deref().unwrap(),
+                        );
 
                         // XXX for tag in s.args.opt_strs("T") {
                         // XXX     r.add_stror(&tag, &i.tags.tag(&tag), "-");
@@ -1454,55 +1509,64 @@ async fn destroy(mut l: Level<Stuff>) -> Result<()> {
 //     Ok(())
 // }
 
-async fn i_register_image(s: &Stuff, name: &str, snapid: &str, ena: bool)
-    -> Result<String>
-{
-    let res = s.ec2().describe_snapshots(DescribeSnapshotsRequest {
-        snapshot_ids: Some(vec![snapid.to_string()]),
-        ..Default::default()
-    }).await?;
+async fn i_register_image(
+    s: &Stuff,
+    name: &str,
+    snapid: &str,
+    ena: bool,
+) -> Result<String> {
+    let res = s
+        .ec2()
+        .describe_snapshots(DescribeSnapshotsRequest {
+            snapshot_ids: Some(vec![snapid.to_string()]),
+            ..Default::default()
+        })
+        .await?;
     let snap = res.snapshots.unwrap().get(0).unwrap().clone();
 
-    let res = s.ec2().register_image(RegisterImageRequest {
-        name: name.to_string(),
-        root_device_name: ss("/dev/sda1"),
-        virtualization_type: ss("hvm"),
-        architecture: ss("x86_64"),
-        ena_support: Some(ena),
-        block_device_mappings: Some(vec![
-            BlockDeviceMapping {
-                device_name: ss("/dev/sda1"), /* XXX? */
-                ebs: Some(EbsBlockDevice {
-                    snapshot_id: Some(snapid.to_string()),
-                    volume_type: ss("gp2"), /* XXX? */
-                    volume_size: snap.volume_size,
+    let res = s
+        .ec2()
+        .register_image(RegisterImageRequest {
+            name: name.to_string(),
+            root_device_name: ss("/dev/sda1"),
+            virtualization_type: ss("hvm"),
+            architecture: ss("x86_64"),
+            ena_support: Some(ena),
+            block_device_mappings: Some(vec![
+                BlockDeviceMapping {
+                    device_name: ss("/dev/sda1"), /* XXX? */
+                    ebs: Some(EbsBlockDevice {
+                        snapshot_id: Some(snapid.to_string()),
+                        volume_type: ss("gp2"), /* XXX? */
+                        volume_size: snap.volume_size,
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
-                ..Default::default()
-            },
-            BlockDeviceMapping {
-                device_name: ss("/dev/sdb"), /* XXX? */
-                virtual_name: ss("ephemeral0"), /* XXX? */
-                ..Default::default()
-            },
-            BlockDeviceMapping {
-                device_name: ss("/dev/sdc"), /* XXX? */
-                virtual_name: ss("ephemeral1"), /* XXX? */
-                ..Default::default()
-            },
-            BlockDeviceMapping {
-                device_name: ss("/dev/sdd"), /* XXX? */
-                virtual_name: ss("ephemeral2"), /* XXX? */
-                ..Default::default()
-            },
-            BlockDeviceMapping {
-                device_name: ss("/dev/sde"), /* XXX? */
-                virtual_name: ss("ephemeral3"), /* XXX? */
-                ..Default::default()
-            },
-        ]),
-        ..Default::default()
-    }).await?;
+                },
+                BlockDeviceMapping {
+                    device_name: ss("/dev/sdb"),    /* XXX? */
+                    virtual_name: ss("ephemeral0"), /* XXX? */
+                    ..Default::default()
+                },
+                BlockDeviceMapping {
+                    device_name: ss("/dev/sdc"),    /* XXX? */
+                    virtual_name: ss("ephemeral1"), /* XXX? */
+                    ..Default::default()
+                },
+                BlockDeviceMapping {
+                    device_name: ss("/dev/sdd"),    /* XXX? */
+                    virtual_name: ss("ephemeral2"), /* XXX? */
+                    ..Default::default()
+                },
+                BlockDeviceMapping {
+                    device_name: ss("/dev/sde"),    /* XXX? */
+                    virtual_name: ss("ephemeral3"), /* XXX? */
+                    ..Default::default()
+                },
+            ]),
+            ..Default::default()
+        })
+        .await?;
 
     println!("res: {:#?}", res);
 
@@ -1510,10 +1574,13 @@ async fn i_register_image(s: &Stuff, name: &str, snapid: &str, ena: bool)
     println!("IMAGE ID: {}", snapid);
 
     loop {
-        let res = s.ec2().describe_images(DescribeImagesRequest {
-            image_ids: Some(vec![imageid.to_string()]),
-            ..Default::default()
-        }).await?;
+        let res = s
+            .ec2()
+            .describe_images(DescribeImagesRequest {
+                image_ids: Some(vec![imageid.to_string()]),
+                ..Default::default()
+            })
+            .await?;
 
         let images = res.images.as_ref().unwrap();
 
@@ -1570,7 +1637,11 @@ async fn do_instance(mut l: Level<Stuff>) -> Result<()> {
     l.cmd("start", "start an instance", cmd!(start))?;
     l.cmd("stop", "stop an instance", cmd!(stop))?;
     l.cmd("protect", "enable termination protection", cmd!(protect))?;
-    l.cmd("unprotect", "disable termination protection", cmd!(unprotect))?;
+    l.cmd(
+        "unprotect",
+        "disable termination protection",
+        cmd!(unprotect),
+    )?;
     l.cmd("create", "create an instance", cmd!(create_instance))?;
     l.cmd("destroy", "destroy an instance", cmd!(destroy))?;
 
@@ -1591,20 +1662,27 @@ async fn do_snapshot(mut l: Level<Stuff>) -> Result<()> {
 
 async fn do_image(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list images", cmd!(images))?; /* XXX */
-    l.cmd("publish", "publish a raw file as an AMI", cmd!(ami_from_file))?;
+    l.cmd(
+        "publish",
+        "publish a raw file as an AMI",
+        cmd!(ami_from_file),
+    )?;
 
     sel!(l).run().await
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut l = Level::new("aws-wire-lengths", Stuff {
-        region_ec2: Region::default(),
-        region_s3: Region::default(),
-        ec2: None,
-        s3: None,
-        credprov: None,
-    });
+    let mut l = Level::new(
+        "aws-wire-lengths",
+        Stuff {
+            region_ec2: Region::default(),
+            region_s3: Region::default(),
+            ec2: None,
+            s3: None,
+            credprov: None,
+        },
+    );
 
     l.optflag("e", "", "use environment variables for credentials");
     l.optopt("r", "region-ec2", "region for EC2", "REGION");
@@ -1618,38 +1696,42 @@ async fn main() -> Result<()> {
     /*
      * XXX These are used in some scripts, so leave them (but hidden) for now.
      */
-    l.hcmd("ami-from-file", "COMPAT: AMI from file", cmd!(ami_from_file))?;
+    l.hcmd(
+        "ami-from-file",
+        "COMPAT: AMI from file",
+        cmd!(ami_from_file),
+    )?;
     l.hcmd("everything", "COMPAT: AMI from file", cmd!(ami_from_file))?;
 
-//  let f: Caller = match std::env::args().nth(1).as_deref() {
-//        Some("put-object") => {
-//            opts.reqopt("b", "bucket", "S3 bucket", "BUCKET");
-//            opts.reqopt("o", "object", "S3 object name", "OBJECT");
-//            opts.reqopt("f", "file", "local file to upload", "FILENAME");
-//
-//            |s| Box::pin(put_object(s))
-//        }
-//        Some("import-volume") => {
-//            opts.reqopt("b", "bucket", "S3 bucket", "BUCKET");
-//            opts.reqopt("p", "prefix", "S3 prefix", "PREFIX");
-//
-//            |s| Box::pin(import_volume(s))
-//        }
-//        Some("create-snapshot") => {
-//            opts.reqopt("v", "volume", "volume ID to snapshot", "VOLUME_ID");
-//
-//            |s| Box::pin(create_snapshot(s))
-//        }
-//        Some("register-image") => {
-//            opts.reqopt("s", "snapshot", "snapshot ID to register",
-//                "SNAPSHOT_ID");
-//            opts.reqopt("n", "name", "target image name", "NAME");
-//            opts.optflag("E", "ena", "enable ENA support");
-//
-//            |s| Box::pin(register_image(s))
-//        }
-//        cmd => bail!("invalid command {:?}", cmd),
-//    };
+    //  let f: Caller = match std::env::args().nth(1).as_deref() {
+    //        Some("put-object") => {
+    //            opts.reqopt("b", "bucket", "S3 bucket", "BUCKET");
+    //            opts.reqopt("o", "object", "S3 object name", "OBJECT");
+    //            opts.reqopt("f", "file", "local file to upload", "FILENAME");
+    //
+    //            |s| Box::pin(put_object(s))
+    //        }
+    //        Some("import-volume") => {
+    //            opts.reqopt("b", "bucket", "S3 bucket", "BUCKET");
+    //            opts.reqopt("p", "prefix", "S3 prefix", "PREFIX");
+    //
+    //            |s| Box::pin(import_volume(s))
+    //        }
+    //        Some("create-snapshot") => {
+    //            opts.reqopt("v", "volume", "volume ID to snapshot", "VOLUME_ID");
+    //
+    //            |s| Box::pin(create_snapshot(s))
+    //        }
+    //        Some("register-image") => {
+    //            opts.reqopt("s", "snapshot", "snapshot ID to register",
+    //                "SNAPSHOT_ID");
+    //            opts.reqopt("n", "name", "target image name", "NAME");
+    //            opts.optflag("E", "ena", "enable ENA support");
+    //
+    //            |s| Box::pin(register_image(s))
+    //        }
+    //        cmd => bail!("invalid command {:?}", cmd),
+    //    };
 
     /*
      * Parse arguments and select which command we will be running.
@@ -1663,28 +1745,38 @@ async fn main() -> Result<()> {
     });
 
     if let Some(reg) = s.opts().opt_str("region-s3").as_deref() {
-        s.context_mut().region_s3 = Region::from_str(reg).context("invalid S3 region")?;
+        s.context_mut().region_s3 =
+            Region::from_str(reg).context("invalid S3 region")?;
     };
     if let Some(reg) = s.opts().opt_str("region-ec2").as_deref() {
-        s.context_mut().region_ec2 = Region::from_str(reg).context("invalid EC2 region")?;
+        s.context_mut().region_ec2 =
+            Region::from_str(reg).context("invalid EC2 region")?;
     };
 
     if s.opts().opt_present("e") {
         let mut stuff = s.context_mut();
-        stuff.s3 = Some(S3Client::new_with(HttpClient::new()?,
+        stuff.s3 = Some(S3Client::new_with(
+            HttpClient::new()?,
             EnvironmentProvider::default(),
-            stuff.region_s3.clone()));
-        stuff.ec2 = Some(Ec2Client::new_with(HttpClient::new()?,
+            stuff.region_s3.clone(),
+        ));
+        stuff.ec2 = Some(Ec2Client::new_with(
+            HttpClient::new()?,
             EnvironmentProvider::default(),
-            stuff.region_ec2.clone()));
+            stuff.region_ec2.clone(),
+        ));
     } else {
         let mut stuff = s.context_mut();
-        stuff.s3 = Some(S3Client::new_with(HttpClient::new()?,
+        stuff.s3 = Some(S3Client::new_with(
+            HttpClient::new()?,
             DefaultCredentialsProvider::new()?,
-            stuff.region_s3.clone()));
-        stuff.ec2 = Some(Ec2Client::new_with(HttpClient::new()?,
+            stuff.region_s3.clone(),
+        ));
+        stuff.ec2 = Some(Ec2Client::new_with(
+            HttpClient::new()?,
             DefaultCredentialsProvider::new()?,
-            stuff.region_ec2.clone()));
+            stuff.region_ec2.clone(),
+        ));
     };
 
     s.run().await
