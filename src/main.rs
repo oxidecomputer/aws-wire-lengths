@@ -5,11 +5,12 @@
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::BytesMut;
 use ec2::{
-    BlockDeviceMapping, CreateSnapshotRequest, DescribeConversionTasksRequest,
-    DescribeImagesRequest, DescribeSnapshotsRequest, DiskImageDetail,
-    EbsBlockDevice, Ec2, Ec2Client, ImportVolumeRequest,
-    InstanceNetworkInterfaceSpecification, RegisterImageRequest,
-    RunInstancesRequest, Tag, TagSpecification, VolumeDetail,
+    BlockDeviceMapping, CreateSnapshotRequest, DeleteSnapshotRequest,
+    DescribeConversionTasksRequest, DescribeImagesRequest,
+    DescribeSnapshotsRequest, DiskImageDetail, EbsBlockDevice, Ec2, Ec2Client,
+    ImportVolumeRequest, InstanceNetworkInterfaceSpecification,
+    RegisterImageRequest, RunInstancesRequest, Tag, TagSpecification,
+    VolumeDetail,
 };
 use hiercmd::prelude::*;
 use rand::distributions::Alphanumeric;
@@ -23,6 +24,7 @@ use rusoto_credential::{
 use rusoto_ec2 as ec2;
 use rusoto_s3 as s3;
 use rusoto_s3::util::{PreSignedRequest, PreSignedRequestOption};
+use rusoto_sts as sts;
 use s3::{
     CompleteMultipartUploadRequest, CompletedMultipartUpload, CompletedPart,
     CreateMultipartUploadRequest, DeleteObjectRequest, GetObjectRequest,
@@ -33,6 +35,8 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::str::FromStr;
 use std::time::Duration;
+use sts::AssumeRoleRequest;
+use sts::{Sts, StsClient};
 use xml::writer::{EmitterConfig, EventWriter, XmlEvent};
 
 trait RowExt {
@@ -1145,6 +1149,36 @@ async fn get_instance_x(
     Ok(out.pop().unwrap())
 }
 
+async fn do_snapshot_rm(mut l: Level<Stuff>) -> Result<()> {
+    l.optflag("n", "", "dry run (do not actually delete)");
+
+    let a = args!(l);
+
+    if a.args().len() < 1 {
+        l.usage();
+        bail!("specify at least one snapshot ID");
+    }
+
+    let dry_run = a.opts().opt_present("n");
+
+    for id in a.args() {
+        l.context()
+            .ec2()
+            .delete_snapshot(DeleteSnapshotRequest {
+                dry_run: Some(dry_run),
+                snapshot_id: id.to_string(),
+            })
+            .await?;
+        if dry_run {
+            println!("would delete {}", id);
+        } else {
+            println!("deleted {}", id);
+        }
+    }
+
+    Ok(())
+}
+
 async fn snapshots(mut l: Level<Stuff>) -> Result<()> {
     l.add_column("id", 22, true);
     l.add_column("start", 24, true);
@@ -1498,6 +1532,56 @@ async fn destroy(mut l: Level<Stuff>) -> Result<()> {
     Ok(())
 }
 
+async fn do_role_assume(mut l: Level<Stuff>) -> Result<()> {
+    l.optopt("", "role", "ARN of role to assume", "ARN");
+    l.optopt("", "session", "name of session", "NAME");
+    l.optopt("", "mfa", "ARN of MFA token", "SERIAL");
+    l.optopt("", "token", "MFA token code", "CODE");
+    l.optflag("", "shell", "emit shell commands to configure environment");
+
+    let a = no_args!(l);
+
+    for opt in &["role", "session", "mfa", "token"] {
+        if !a.opts().opt_present(opt) {
+            l.usage();
+            bail!("--{} is a required option", opt);
+        }
+    }
+
+    let res = l
+        .context()
+        .sts()
+        .assume_role(AssumeRoleRequest {
+            duration_seconds: Some(3600),
+            role_arn: a.opts().opt_str("role").unwrap(),
+            role_session_name: a.opts().opt_str("session").unwrap(),
+            serial_number: a.opts().opt_str("mfa"),
+            token_code: a.opts().opt_str("token"),
+            ..Default::default()
+        })
+        .await?;
+
+    if a.opts().opt_present("shell") {
+        if let Some(c) = res.credentials {
+            println!("AWS_ACCESS_KEY_ID='{}'; ", c.access_key_id);
+            println!("AWS_CREDENTIAL_EXPIRATION='{}'; ", c.expiration);
+            println!("AWS_SECRET_ACCESS_KEY='{}'; ", c.secret_access_key);
+            println!("AWS_SESSION_TOKEN='{}'; ", c.session_token);
+            for v in [
+                "ACCESS_KEY_ID",
+                "CREDENTIAL_EXPIRATION",
+                "SECRET_ACCESS_KEY",
+                "SESSION_TOKEN",
+            ] {
+                println!("export AWS_{}; ", v);
+            }
+        }
+    } else {
+        println!("res: {:#?}", res);
+    }
+    Ok(())
+}
+
 // async fn register_image(mut l: Level<Stuff>) -> Result<()> {
 //     let name = s.args.opt_str("n").unwrap();
 //     let snapid = s.args.opt_str("s").unwrap();
@@ -1604,8 +1688,10 @@ async fn i_register_image(
 struct Stuff {
     region_ec2: Region,
     region_s3: Region,
+    region_sts: Region,
     s3: Option<s3::S3Client>,
     ec2: Option<ec2::Ec2Client>,
+    sts: Option<sts::StsClient>,
     credprov: Option<Box<dyn ProvideAwsCredentials + Send + Sync>>,
 }
 
@@ -1614,13 +1700,16 @@ impl Default for Stuff {
         Stuff {
             region_ec2: Region::default(),
             region_s3: Region::default(),
+            region_sts: Region::default(),
             ec2: None,
             s3: None,
+            sts: None,
             credprov: None,
         }
     }
 }
 
+#[allow(dead_code)]
 impl Stuff {
     fn ec2(&self) -> &dyn Ec2 {
         self.ec2.as_ref().unwrap()
@@ -1630,12 +1719,20 @@ impl Stuff {
         self.s3.as_ref().unwrap()
     }
 
+    fn sts(&self) -> &dyn Sts {
+        self.sts.as_ref().unwrap()
+    }
+
     fn region_ec2(&self) -> &Region {
         &self.region_ec2
     }
 
     fn region_s3(&self) -> &Region {
         &self.region_s3
+    }
+
+    fn region_sts(&self) -> &Region {
+        &self.region_sts
     }
 
     fn credprov(&self) -> &dyn ProvideAwsCredentials {
@@ -1668,6 +1765,13 @@ async fn do_volume(mut l: Level<Stuff>) -> Result<()> {
 
 async fn do_snapshot(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list snapshots", cmd!(snapshots))?; /* XXX */
+    l.cmda("destroy", "rm", "destroy a snapshot", cmd!(do_snapshot_rm))?;
+
+    sel!(l).run().await
+}
+
+async fn do_role(mut l: Level<Stuff>) -> Result<()> {
+    l.cmd("assume", "assume a role", cmd!(do_role_assume))?;
 
     sel!(l).run().await
 }
@@ -1690,11 +1794,17 @@ async fn main() -> Result<()> {
     l.optflag("e", "", "use environment variables for credentials");
     l.optopt("r", "region-ec2", "region for EC2", "REGION");
     l.optopt("R", "region-s3", "region for S3", "REGION");
+    l.optopt("", "region-sts", "region for STS", "REGION");
 
     l.cmda("instance", "inst", "instance management", cmd!(do_instance))?;
     l.cmda("volume", "vol", "volume management", cmd!(do_volume))?;
     l.cmda("snapshot", "snap", "snapshot management", cmd!(do_snapshot))?;
     l.cmda("image", "ami", "image (AMI) management", cmd!(do_image))?;
+    l.cmd(
+        "role",
+        "security token service (STS) management",
+        cmd!(do_role),
+    )?;
 
     /*
      * XXX These are used in some scripts, so leave them (but hidden) for now.
@@ -1755,6 +1865,10 @@ async fn main() -> Result<()> {
         s.context_mut().region_ec2 =
             Region::from_str(reg).context("invalid EC2 region")?;
     };
+    if let Some(reg) = s.opts().opt_str("region-sts").as_deref() {
+        s.context_mut().region_sts =
+            Region::from_str(reg).context("invalid STS region")?;
+    };
 
     if s.opts().opt_present("e") {
         let mut stuff = s.context_mut();
@@ -1768,6 +1882,11 @@ async fn main() -> Result<()> {
             EnvironmentProvider::default(),
             stuff.region_ec2.clone(),
         ));
+        stuff.sts = Some(StsClient::new_with(
+            HttpClient::new()?,
+            EnvironmentProvider::default(),
+            stuff.region_sts.clone(),
+        ));
     } else {
         let mut stuff = s.context_mut();
         stuff.s3 = Some(S3Client::new_with(
@@ -1779,6 +1898,11 @@ async fn main() -> Result<()> {
             HttpClient::new()?,
             DefaultCredentialsProvider::new()?,
             stuff.region_ec2.clone(),
+        ));
+        stuff.sts = Some(StsClient::new_with(
+            HttpClient::new()?,
+            DefaultCredentialsProvider::new()?,
+            stuff.region_sts.clone(),
         ));
     };
 
