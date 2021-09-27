@@ -6,6 +6,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use bytes::BytesMut;
 use ec2::{
     BlockDeviceMapping, CreateSnapshotRequest, DeleteSnapshotRequest,
+    DeleteVolumeRequest, DeregisterImageRequest,
     DescribeConversionTasksRequest, DescribeImagesRequest,
     DescribeSnapshotsRequest, DiskImageDetail, EbsBlockDevice, Ec2, Ec2Client,
     ImportVolumeRequest, InstanceNetworkInterfaceSpecification,
@@ -730,14 +731,21 @@ async fn ami_from_file(mut l: Level<Stuff>) -> Result<()> {
     let snapid = i_create_snapshot(l.context(), &volid).await?;
     println!("COMPLETED SNAPSHOT ID: {}", snapid);
 
+    println!("REMOVING VOLUME:");
+    if let Err(e) = i_volume_rm(l.context(), &volid, false).await {
+        /*
+         * Seeing as we have done almost all of the actual work at this point,
+         * don't fail the command if we cannot delete the volume now.
+         */
+        println!("WARNING: COULD NOT REMOVE VOLUME: {:?}", e);
+    } else {
+        println!("REMOVED VOLUME ID: {}", volid);
+    }
+
     println!("REGISTERING IMAGE:");
     let ami =
         i_register_image(l.context(), &name, &snapid, support_ena).await?;
     println!("COMPLETED IMAGE ID: {}", ami);
-
-    /*
-     * XXX Should remove volume after registration?
-     */
 
     Ok(())
 }
@@ -1149,12 +1157,76 @@ async fn get_instance_x(
     Ok(out.pop().unwrap())
 }
 
+async fn do_image_rm(mut l: Level<Stuff>) -> Result<()> {
+    l.optflag("n", "", "dry run (do not actually delete)");
+
+    let a = args!(l);
+
+    if a.args().is_empty() {
+        l.usage();
+        bail!("specify at least one image ID");
+    }
+
+    let dry_run = a.opts().opt_present("n");
+
+    for id in a.args() {
+        l.context()
+            .ec2()
+            .deregister_image(DeregisterImageRequest {
+                dry_run: Some(dry_run),
+                image_id: id.to_string(),
+            })
+            .await?;
+        if dry_run {
+            println!("would delete {}", id);
+        } else {
+            println!("deleted {}", id);
+        }
+    }
+
+    Ok(())
+}
+
+async fn i_volume_rm(s: &Stuff, volid: &str, dry_run: bool) -> Result<()> {
+    s.ec2()
+        .delete_volume(DeleteVolumeRequest {
+            dry_run: Some(dry_run),
+            volume_id: id.to_string(),
+        })
+        .await?;
+    Ok(())
+}
+
+async fn do_volume_rm(mut l: Level<Stuff>) -> Result<()> {
+    l.optflag("n", "", "dry run (do not actually delete)");
+
+    let a = args!(l);
+
+    if a.args().is_empty() {
+        l.usage();
+        bail!("specify at least one volume ID");
+    }
+
+    let dry_run = a.opts().opt_present("n");
+
+    for id in a.args() {
+        i_volume_rm(l.context(), id.as_str(), dry_run).await?;
+        if dry_run {
+            println!("would delete {}", id);
+        } else {
+            println!("deleted {}", id);
+        }
+    }
+
+    Ok(())
+}
+
 async fn do_snapshot_rm(mut l: Level<Stuff>) -> Result<()> {
     l.optflag("n", "", "dry run (do not actually delete)");
 
     let a = args!(l);
 
-    if a.args().len() < 1 {
+    if a.args().is_empty() {
         l.usage();
         bail!("specify at least one snapshot ID");
     }
@@ -1188,14 +1260,21 @@ async fn snapshots(mut l: Level<Stuff>) -> Result<()> {
     l.add_column("volume", 22, false);
     // XXX l.sort_from_list_desc(Some("start"))
 
-    let a = no_args!(l);
+    let a = args!(l);
     let mut t = a.table();
     let s = l.context();
+
+    let snapshot_ids = if a.args().is_empty() {
+        None
+    } else {
+        Some(a.args().to_vec())
+    };
 
     let res = s
         .ec2()
         .describe_snapshots(ec2::DescribeSnapshotsRequest {
             owner_ids: Some(vec!["self".to_string()]),
+            snapshot_ids,
             ..Default::default()
         })
         .await?;
@@ -1759,6 +1838,7 @@ async fn do_instance(mut l: Level<Stuff>) -> Result<()> {
 
 async fn do_volume(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list volumes", cmd!(volumes))?; /* XXX */
+    l.cmda("destroy", "rm", "destroy a volume", cmd!(do_volume_rm))?;
 
     sel!(l).run().await
 }
@@ -1778,6 +1858,7 @@ async fn do_role(mut l: Level<Stuff>) -> Result<()> {
 
 async fn do_image(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list images", cmd!(images))?; /* XXX */
+    l.cmda("destroy", "rm", "destroy an image", cmd!(do_image_rm))?;
     l.cmd(
         "publish",
         "publish a raw file as an AMI",
