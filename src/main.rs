@@ -685,25 +685,13 @@ async fn create_instance(mut l: Level<Stuff>) -> Result<()> {
 }
 
 async fn ami_from_file(mut l: Level<Stuff>) -> Result<()> {
-    l.optopt("b", "bucket", "S3 bucket", "BUCKET");
+    l.reqopt("b", "bucket", "S3 bucket", "BUCKET");
     l.optopt("p", "prefix", "S3 prefix", "PREFIX");
-    l.optopt("n", "name", "target image name", "NAME");
+    l.reqopt("n", "name", "target image name", "NAME");
     l.optflag("E", "ena", "enable ENA support");
-    l.optopt("f", "file", "local file to upload", "FILENAME");
+    l.reqopt("f", "file", "local file to upload", "FILENAME");
 
     let a = no_args!(l);
-    if !a.opts().opt_present("b") {
-        l.usage();
-        bail!("--bucket (-b) is a required option");
-    }
-    if !a.opts().opt_present("n") {
-        l.usage();
-        bail!("--name (-n) is a required option");
-    }
-    if !a.opts().opt_present("f") {
-        l.usage();
-        bail!("--file (-f) is a required option");
-    }
 
     let name = a.opts().opt_str("n").unwrap();
     let pfx = if let Some(pfx) = a.opts().opt_str("p") {
@@ -1163,8 +1151,7 @@ async fn do_image_rm(mut l: Level<Stuff>) -> Result<()> {
     let a = args!(l);
 
     if a.args().is_empty() {
-        l.usage();
-        bail!("specify at least one image ID");
+        bad_args!(l, "specify at least one image ID");
     }
 
     let dry_run = a.opts().opt_present("n");
@@ -1191,7 +1178,7 @@ async fn i_volume_rm(s: &Stuff, volid: &str, dry_run: bool) -> Result<()> {
     s.ec2()
         .delete_volume(DeleteVolumeRequest {
             dry_run: Some(dry_run),
-            volume_id: id.to_string(),
+            volume_id: volid.to_string(),
         })
         .await?;
     Ok(())
@@ -1203,8 +1190,7 @@ async fn do_volume_rm(mut l: Level<Stuff>) -> Result<()> {
     let a = args!(l);
 
     if a.args().is_empty() {
-        l.usage();
-        bail!("specify at least one volume ID");
+        bad_args!(l, "specify at least one volume ID");
     }
 
     let dry_run = a.opts().opt_present("n");
@@ -1227,8 +1213,7 @@ async fn do_snapshot_rm(mut l: Level<Stuff>) -> Result<()> {
     let a = args!(l);
 
     if a.args().is_empty() {
-        l.usage();
-        bail!("specify at least one snapshot ID");
+        bad_args!(l, "specify at least one snapshot ID");
     }
 
     let dry_run = a.opts().opt_present("n");
@@ -1612,20 +1597,13 @@ async fn destroy(mut l: Level<Stuff>) -> Result<()> {
 }
 
 async fn do_role_assume(mut l: Level<Stuff>) -> Result<()> {
-    l.optopt("", "role", "ARN of role to assume", "ARN");
-    l.optopt("", "session", "name of session", "NAME");
-    l.optopt("", "mfa", "ARN of MFA token", "SERIAL");
-    l.optopt("", "token", "MFA token code", "CODE");
+    l.reqopt("", "role", "ARN of role to assume", "ARN");
+    l.reqopt("", "session", "name of session", "NAME");
+    l.reqopt("", "mfa", "ARN of MFA token", "SERIAL");
+    l.reqopt("", "token", "MFA token code", "CODE");
     l.optflag("", "shell", "emit shell commands to configure environment");
 
     let a = no_args!(l);
-
-    for opt in &["role", "session", "mfa", "token"] {
-        if !a.opts().opt_present(opt) {
-            l.usage();
-            bail!("--{} is a required option", opt);
-        }
-    }
 
     let res = l
         .context()
