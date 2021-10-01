@@ -648,13 +648,19 @@ async fn create_instance(mut l: Level<Stuff>) -> Result<()> {
         }
     };
     let fetch = |n: &str| -> Result<String> {
-        fetchopt(n).ok_or_else(|| anyhow!("must specify option \"{}\"", n))
+        if let Some(v) = fetchopt(n) {
+            Ok(v)
+        } else {
+            bad_args!(l, "must specify option \"{}\"", n);
+        }
     };
     let fetch_u32 = |n: &str| -> Result<u32> {
-        Ok(fetchopt(n)
-            .ok_or_else(|| anyhow!("must specify option \"{}\"", n))?
-            .parse::<u32>()
-            .map_err(|e| anyhow!("option \"{}\" must be a u32: {:?}", n, e))?)
+        match fetch(n)?.parse::<u32>() {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                bad_args!(l, "option \"{}\" must be a u32: {:?}", n, e);
+            }
+        }
     };
 
     let mut tags = HashMap::new();
