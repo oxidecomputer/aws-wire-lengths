@@ -14,8 +14,10 @@ set -o xtrace
 
 rustc --version
 
-cargo build --release
+banner build
+ptime -m cargo build --release
 
+banner package
 cp target/release/aws-wire-lengths /work/awl
 digest -a sha256 /work/awl > /work/awl.sha256.txt
 gzip /work/awl
