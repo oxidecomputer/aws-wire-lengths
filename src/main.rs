@@ -65,7 +65,8 @@ impl AsFlag for Option<bool> {
             }
         } else {
             "-"
-        }.to_string()
+        }
+        .to_string()
     }
 }
 
