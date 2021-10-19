@@ -10,11 +10,11 @@ default = ["vendored-openssl"]
 vendored-openssl = ['openssl/vendored']
 
 [dependencies]
-rusoto_core = "0.46.0"
-rusoto_ec2 = "0.46.0"
-rusoto_s3 = "0.46.0"
-rusoto_sts = "0.46.0"
-rusoto_credential = "0.46.0"
+rusoto_core = "0.47"
+rusoto_ec2 = "0.47"
+rusoto_s3 = "0.47"
+rusoto_sts = "0.47"
+rusoto_credential = "0.47"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
