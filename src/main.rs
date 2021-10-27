@@ -1546,6 +1546,30 @@ async fn start(mut l: Level<Stuff>) -> Result<()> {
     Ok(())
 }
 
+async fn nmi(mut l: Level<Stuff>) -> Result<()> {
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 1 {
+        bail!("expect the name of just one instance");
+    }
+
+    let i = get_instance_fuzzy(l.context(), a.args().get(0).unwrap()).await?;
+
+    println!("sending diagnostic interrupt to instance: {:?}", i);
+
+    s.ec2()
+        .send_diagnostic_interrupt(ec2::SendDiagnosticInterruptRequest {
+            instance_id: i.id.to_string(),
+            ..Default::default()
+        })
+        .await?;
+
+    println!("all done!");
+
+    Ok(())
+}
+
 async fn stop(mut l: Level<Stuff>) -> Result<()> {
     l.optflag("f", "", "force stop");
 
@@ -1836,6 +1860,12 @@ async fn do_instance(mut l: Level<Stuff>) -> Result<()> {
     )?;
     l.cmd("create", "create an instance", cmd!(create_instance))?;
     l.cmd("destroy", "destroy an instance", cmd!(destroy))?;
+    l.cmda(
+        "diag",
+        "nmi",
+        "send diagnostic interrupt to instance",
+        cmd!(nmi),
+    )?;
 
     sel!(l).run().await
 }
