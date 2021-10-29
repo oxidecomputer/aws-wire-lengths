@@ -910,7 +910,7 @@ async fn stop_instance(s: &Stuff, id: &str, force: bool) -> Result<()> {
             }
         };
 
-        if shouldstop && !stopped {
+        if (force || shouldstop) && !stopped {
             println!("    {}stopping...", pfx);
             let res = s
                 .ec2()
@@ -1592,6 +1592,30 @@ async fn stop(mut l: Level<Stuff>) -> Result<()> {
     Ok(())
 }
 
+async fn reboot(mut l: Level<Stuff>) -> Result<()> {
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 1 {
+        bail!("expect the name of just one instance");
+    }
+
+    let i = get_instance_fuzzy(l.context(), a.args().get(0).unwrap()).await?;
+
+    println!("rebooting instance: {:?}", i);
+
+    s.ec2()
+        .reboot_instances(ec2::RebootInstancesRequest {
+            instance_ids: vec![i.id.to_string()],
+            ..Default::default()
+        })
+        .await?;
+
+    println!("all done!");
+
+    Ok(())
+}
+
 async fn protect(mut l: Level<Stuff>) -> Result<()> {
     let a = args!(l);
 
@@ -1851,6 +1875,7 @@ async fn do_instance(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list instances", cmd!(info))?; /* XXX */
     l.cmd("ip", "get IP address for instance", cmd!(ip))?;
     l.cmd("start", "start an instance", cmd!(start))?;
+    l.cmd("reboot", "reboot an instance", cmd!(reboot))?;
     l.cmd("stop", "stop an instance", cmd!(stop))?;
     l.cmd("protect", "enable termination protection", cmd!(protect))?;
     l.cmd(
