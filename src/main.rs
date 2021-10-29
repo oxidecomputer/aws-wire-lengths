@@ -2,6 +2,8 @@
  * Copyright 2021 Oxide Computer Company
  */
 
+#![allow(clippy::many_single_char_names)]
+
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::BytesMut;
 use ec2::{
@@ -13,16 +15,21 @@ use ec2::{
     RegisterImageRequest, RunInstancesRequest, Tag, TagSpecification,
     VolumeDetail,
 };
+use ec2ic::{Ec2InstanceConnect, Ec2InstanceConnectClient};
 use hiercmd::prelude::*;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
+use rsa::pkcs8::{FromPrivateKey, ToPrivateKey};
+use rsa::PublicKeyParts;
 use rusoto_core::param::Params;
 use rusoto_core::signature::SignedRequest;
+use rusoto_core::RusotoError;
 use rusoto_core::{HttpClient, Region};
 use rusoto_credential::{
     DefaultCredentialsProvider, EnvironmentProvider, ProvideAwsCredentials,
 };
 use rusoto_ec2 as ec2;
+use rusoto_ec2_instance_connect as ec2ic;
 use rusoto_s3 as s3;
 use rusoto_s3::util::{PreSignedRequest, PreSignedRequestOption};
 use rusoto_sts as sts;
@@ -34,7 +41,8 @@ use s3::{
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::process::CommandExt;
 use std::str::FromStr;
 use std::time::Duration;
 use sts::AssumeRoleRequest;
@@ -1570,6 +1578,293 @@ async fn nmi(mut l: Level<Stuff>) -> Result<()> {
     Ok(())
 }
 
+async fn sercons(mut l: Level<Stuff>) -> Result<()> {
+    l.optflag("S", "start", "start the instance before we try to connect");
+
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 1 {
+        bail!("expect the name of just one instance");
+    }
+
+    let start = a.opts().opt_present("start");
+
+    let i = get_instance_fuzzy(l.context(), a.args().get(0).unwrap()).await?;
+
+    /*
+     * To access an EC2 serial console, you must first push an SSH key to the
+     * remote system.  That key will be useable for 60 seconds to initiate an
+     * SSH connection to the concentrator service.  At time of writing, the
+     * serial console service only supports RSA keys; no other types.
+     *
+     * To make this easier, we will generate an ephemeral key and
+     * tell ssh(1) about it.  Regrettably EC2 Instance Connect requires a
+     * 2048 bit key, even though it has a 60 second lifetime and a 1024 bit key,
+     * which would be substantially cheaper to generate, would seem fine.
+     * The API is also very picky about how many times you can push a key,
+     * even the same key, often throwing an error like "Too many active serial
+     * console sessions." which is neither helpful nor even strictly true.
+     *
+     * We know the expected SSH host key for at least some of the servers, so we
+     * can prepopulate a special known_hosts file.
+     */
+    let dir = if let Some(mut dir) = dirs_next::cache_dir() {
+        dir.push("aws-wire-lengths");
+        dir
+    } else {
+        bail!("could not find user cache directory");
+    };
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .recursive(true)
+        .create(&dir)?;
+
+    let path_knownhosts = {
+        let mut path_knownhosts = dir.clone();
+        path_knownhosts.push("known_hosts");
+        path_knownhosts
+    };
+
+    let lines = match std::fs::File::open(&path_knownhosts) {
+        Ok(mut f) => {
+            let mut s = String::new();
+            f.read_to_string(&mut s)?;
+            s.lines().map(|s| s.to_string()).collect::<Vec<_>>()
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => bail!("opening {:?}: {:?}", path_knownhosts, e),
+    };
+
+    /*
+     * The list of known hosts and their keys is included in the executable at
+     * build time:
+     */
+    for want in include_str!("../known_hosts.txt").lines() {
+        if lines.iter().any(|l| l == want) {
+            /*
+             * This key already appears in our local file.
+             */
+            continue;
+        }
+
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .append(true)
+            .create(true)
+            .mode(0o600)
+            .open(&path_knownhosts)?;
+        f.write_all(format!("{}\n", want).as_bytes())?;
+        f.flush()?;
+    }
+
+    /*
+     * Check to see if we have already generated an SSH key.  We will avoid
+     * regenerating the key if it was generated in the last hour.
+     */
+    let path_pemfile = {
+        let mut path_pemfile = dir.clone();
+        path_pemfile.push("sercons.pem");
+        path_pemfile
+    };
+
+    let key = match std::fs::File::open(&path_pemfile) {
+        Ok(mut f) => {
+            let mut s = String::new();
+            if let Err(e) = f.read_to_string(&mut s) {
+                eprintln!("WARNING: reading {:?}: {:?}", path_pemfile, e);
+                None
+            } else {
+                match rsa::RsaPrivateKey::from_pkcs8_pem(&s) {
+                    Ok(key) => {
+                        if let Ok(age) = std::time::SystemTime::now()
+                            .duration_since(f.metadata()?.modified()?)
+                        {
+                            if age.as_secs() < 3600 {
+                                Some(key)
+                            } else {
+                                /*
+                                 * Old key, so regenerate.
+                                 */
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "WARNING: parsing {:?}: {:?}",
+                            path_pemfile, e
+                        );
+                        None
+                    }
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            eprintln!("WARNING: opening {:?}: {:?}", path_pemfile, e);
+            None
+        }
+    };
+
+    let key = if let Some(key) = key {
+        key
+    } else {
+        eprintln!("INFO: generating a new SSH key...");
+        let key = rsa::RsaPrivateKey::new(&mut thread_rng(), 2048)?;
+        let privkey = key.to_pkcs8_pem()?;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&path_pemfile)?;
+        f.write_all(privkey.to_string().as_bytes())?;
+        f.flush()?;
+        key
+    };
+
+    /*
+     * Could not see an easy crate for emitting the OpenSSH style public key
+     * format, so we'll do it here by hand.
+     *
+     * The format is:
+     *
+     *  string  "ssh-rsa"
+     *  bigint  e
+     *  bigint  n
+     *
+     * Both data types are length-prefixed with a network order 32-bit unsigned
+     * integer, and then just consist of the bytes of the string or the network
+     * ordered bytes of the integer.  This packed binary layout is then
+     * base64-encoded.
+     *
+     * Note that we add an extra 0 on the significant end of the "n" field, in
+     * order that it not be mis-interpreted as a very large and very negative
+     * value.
+     */
+    let pubkey = key.to_public_key();
+    let mut raw = Vec::<u8>::new();
+    let hdr = "ssh-rsa";
+    raw.extend_from_slice(&(hdr.as_bytes().len() as u32).to_be_bytes());
+    raw.extend_from_slice(hdr.as_bytes());
+
+    let e = pubkey.e().to_bytes_be();
+    raw.extend_from_slice(&(e.len() as u32).to_be_bytes());
+    raw.extend_from_slice(&e);
+
+    let n = pubkey.n().to_bytes_be();
+    raw.extend_from_slice(&((n.len() as u32) + 1).to_be_bytes());
+    raw.push(0);
+    raw.extend_from_slice(&n);
+
+    let pubkey =
+        format!("ssh-rsa {}", base64::encode_config(raw, base64::STANDARD));
+
+    if start {
+        start_instance(s, &i.id).await?;
+    }
+
+    /*
+     * Try to push the key to the server.
+     */
+    let mut warned = false;
+    let mut nostartmsg = false;
+    loop {
+        use ec2ic::SendSerialConsoleSSHPublicKeyError::*;
+
+        match s
+            .ic()
+            .send_serial_console_ssh_public_key(
+                ec2ic::SendSerialConsoleSSHPublicKeyRequest {
+                    instance_id: i.id.to_string(),
+                    ssh_public_key: pubkey.to_string(),
+                    ..Default::default()
+                },
+            )
+            .await
+        {
+            Ok(x) => {
+                if !x.success.unwrap_or_default() {
+                    /*
+                     * This is a bad API and it should feel bad.
+                     */
+                    eprintln!("WARNING: key push request did not succeed?");
+                }
+                break;
+            }
+            Err(RusotoError::Service(Throttling(e))) => {
+                /*
+                 * Sigh.
+                 */
+                eprintln!("WARNING: throttle? {}", e);
+                std::thread::sleep(Duration::from_secs(2));
+            }
+            Err(RusotoError::Unknown(res)) => {
+                let b = res.body_as_str();
+
+                if res.status == 400
+                    && (b.contains("stopped instance")
+                        || b.contains("pending state"))
+                {
+                    /*
+                     * This looks like the instance is not started.  So that we
+                     * can try to catch it as soon as possible in boot, poll
+                     * waiting for it to start.
+                     */
+                    if !nostartmsg {
+                        eprintln!(
+                            "INFO: instance not running? waiting to start..."
+                        );
+                        nostartmsg = true;
+                    }
+
+                    std::thread::sleep(Duration::from_secs(1));
+                } else {
+                    bail!("SSH key push failure: {}", res.body_as_str());
+                }
+            }
+            Err(RusotoError::Service(SerialConsoleSessionLimitExceeded(e))) => {
+                if !warned {
+                    eprintln!("WARNING: {} (retrying)", e);
+                    warned = true;
+                }
+
+                std::thread::sleep(Duration::from_secs(3));
+            }
+            Err(e) => {
+                bail!("SSH key push failure: {:?}", e);
+            }
+        }
+    }
+
+    if warned || nostartmsg {
+        println!();
+    }
+
+    println!("Connecting to serial console.  Escape sequence is <Enter>#.");
+    let err = std::process::Command::new("ssh")
+        .arg("-o")
+        .arg(format!(
+            "UserKnownHostsFile={}",
+            path_knownhosts.to_str().unwrap()
+        ))
+        .arg("-e")
+        .arg("#")
+        .arg("-i")
+        .arg(path_pemfile)
+        .arg(format!(
+            "{}.port0@serial-console.ec2-instance-connect.{}.aws",
+            i.id,
+            s.region_ec2().name()
+        ))
+        .exec();
+
+    bail!("SSH exec error: {:?}", err);
+}
+
 async fn stop(mut l: Level<Stuff>) -> Result<()> {
     l.optflag("f", "", "force stop");
 
@@ -1816,28 +2111,16 @@ async fn i_register_image(
     }
 }
 
+#[derive(Default)]
 struct Stuff {
     region_ec2: Region,
     region_s3: Region,
     region_sts: Region,
     s3: Option<s3::S3Client>,
     ec2: Option<ec2::Ec2Client>,
+    ic: Option<ec2ic::Ec2InstanceConnectClient>,
     sts: Option<sts::StsClient>,
     credprov: Option<Box<dyn ProvideAwsCredentials + Send + Sync>>,
-}
-
-impl Default for Stuff {
-    fn default() -> Stuff {
-        Stuff {
-            region_ec2: Region::default(),
-            region_s3: Region::default(),
-            region_sts: Region::default(),
-            ec2: None,
-            s3: None,
-            sts: None,
-            credprov: None,
-        }
-    }
 }
 
 #[allow(dead_code)]
@@ -1852,6 +2135,10 @@ impl Stuff {
 
     fn sts(&self) -> &dyn Sts {
         self.sts.as_ref().unwrap()
+    }
+
+    fn ic(&self) -> &dyn Ec2InstanceConnect {
+        self.ic.as_ref().unwrap()
     }
 
     fn region_ec2(&self) -> &Region {
@@ -1890,6 +2177,11 @@ async fn do_instance(mut l: Level<Stuff>) -> Result<()> {
         "nmi",
         "send diagnostic interrupt to instance",
         cmd!(nmi),
+    )?;
+    l.cmd(
+        "console",
+        "connect to the serial console of a guest",
+        cmd!(sercons),
     )?;
 
     sel!(l).run().await
@@ -2087,6 +2379,99 @@ async fn do_sg_ls(mut l: Level<Stuff>) -> Result<()> {
     Ok(())
 }
 
+async fn do_serial_disable(mut l: Level<Stuff>) -> Result<()> {
+    no_args!(l);
+    let s = l.context();
+
+    let res = s
+        .ec2()
+        .disable_serial_console_access(
+            ec2::DisableSerialConsoleAccessRequest::default(),
+        )
+        .await?;
+
+    if res
+        .serial_console_access_enabled
+        .ok_or_else(|| anyhow!("weird response"))?
+    {
+        bail!("tried to disable serial consoles, but they are still enabled");
+    }
+
+    Ok(())
+}
+
+async fn do_serial_enable(mut l: Level<Stuff>) -> Result<()> {
+    no_args!(l);
+    let s = l.context();
+
+    let res = s
+        .ec2()
+        .enable_serial_console_access(
+            ec2::EnableSerialConsoleAccessRequest::default(),
+        )
+        .await?;
+
+    if !res
+        .serial_console_access_enabled
+        .ok_or_else(|| anyhow!("weird response"))?
+    {
+        bail!("tried to enable serial consoles, but they are still disabled");
+    }
+
+    Ok(())
+}
+
+async fn do_serial_get(mut l: Level<Stuff>) -> Result<()> {
+    no_args!(l);
+    let s = l.context();
+
+    let res = s
+        .ec2()
+        .get_serial_console_access_status(
+            ec2::GetSerialConsoleAccessStatusRequest::default(),
+        )
+        .await?;
+
+    if res
+        .serial_console_access_enabled
+        .ok_or_else(|| anyhow!("weird response"))?
+    {
+        println!("enabled");
+    } else {
+        println!("disabled");
+    }
+
+    Ok(())
+}
+
+async fn do_serial(mut l: Level<Stuff>) -> Result<()> {
+    l.cmda(
+        "enable",
+        "on",
+        "enable serial consoles",
+        cmd!(do_serial_enable),
+    )?;
+    l.cmda(
+        "disable",
+        "off",
+        "disable serial consoles",
+        cmd!(do_serial_disable),
+    )?;
+    l.cmd(
+        "get",
+        "get serial console enable status",
+        cmd!(do_serial_get),
+    )?;
+
+    sel!(l).run().await
+}
+
+async fn do_config(mut l: Level<Stuff>) -> Result<()> {
+    l.cmd("serial", "manage serial console access", cmd!(do_serial))?;
+
+    sel!(l).run().await
+}
+
 async fn do_subnet(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list subnets", cmd!(do_subnet_ls))?;
 
@@ -2172,6 +2557,11 @@ async fn main() -> Result<()> {
     l.cmd("sg", "security group management", cmd!(do_sg))?;
     l.cmd("key", "SSH key management", cmd!(do_key))?;
     l.cmd("subnet", "subnet management", cmd!(do_subnet))?;
+    l.cmd(
+        "config",
+        "manage account- or region-level configuration",
+        cmd!(do_config),
+    )?;
     /*
      * XXX These are used in some scripts, so leave them (but hidden) for now.
      */
@@ -2248,6 +2638,11 @@ async fn main() -> Result<()> {
             EnvironmentProvider::default(),
             stuff.region_ec2.clone(),
         ));
+        stuff.ic = Some(Ec2InstanceConnectClient::new_with(
+            HttpClient::new()?,
+            EnvironmentProvider::default(),
+            stuff.region_ec2.clone(),
+        ));
         stuff.sts = Some(StsClient::new_with(
             HttpClient::new()?,
             EnvironmentProvider::default(),
@@ -2261,6 +2656,11 @@ async fn main() -> Result<()> {
             stuff.region_s3.clone(),
         ));
         stuff.ec2 = Some(Ec2Client::new_with(
+            HttpClient::new()?,
+            DefaultCredentialsProvider::new()?,
+            stuff.region_ec2.clone(),
+        ));
+        stuff.ic = Some(Ec2InstanceConnectClient::new_with(
             HttpClient::new()?,
             DefaultCredentialsProvider::new()?,
             stuff.region_ec2.clone(),

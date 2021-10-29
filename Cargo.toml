@@ -15,6 +15,7 @@ rusoto_ec2 = "0.47"
 rusoto_s3 = "0.47"
 rusoto_sts = "0.47"
 rusoto_credential = "0.47"
+rusoto_ec2_instance_connect = "0.47"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
@@ -34,3 +35,5 @@ hiercmd = { git = "https://github.com/jclulow/hiercmd" }
 # same version will then be used by reqwest.
 #
 openssl = { version = "0.10", optional = true }
+rsa = "0.5.0"
+dirs-next = "2.0.0"
