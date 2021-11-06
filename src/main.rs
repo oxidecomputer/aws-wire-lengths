@@ -800,6 +800,7 @@ struct Instance {
     ip: Option<String>,
     state: String,
     launch: String,
+    tags: Vec<Tag>,
 }
 
 #[derive(Debug, Clone)]
@@ -1159,6 +1160,11 @@ async fn get_instance_x(
                         .unwrap()
                         .to_string(),
                     launch: inst.launch_time.as_deref().unwrap().to_string(),
+                    tags: inst
+                        .tags
+                        .as_ref()
+                        .map(|o| o.iter().cloned().collect())
+                        .unwrap_or_default(),
                 });
             }
         }
@@ -1459,6 +1465,52 @@ async fn ip(mut l: Level<Stuff>) -> Result<()> {
     } else {
         bail!("no IP address for instance {} ({})", n, i.id);
     }
+}
+
+async fn dump(mut l: Level<Stuff>) -> Result<()> {
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 1 {
+        bail!("specify a single instance by name or ID");
+    }
+    let i = get_instance_fuzzy(s, &a.args()[0]).await?;
+
+    println!("INSTANCE {}", i.id);
+
+    let res = s
+        .ec2()
+        .describe_instance_attribute(ec2::DescribeInstanceAttributeRequest {
+            attribute: "disableApiTermination".to_string(),
+            instance_id: i.id.to_string(),
+            ..Default::default()
+        })
+        .await?;
+
+    if res
+        .disable_api_termination
+        .unwrap_or_default()
+        .value
+        .unwrap_or_default()
+    {
+        println!("TERMINATION PROTECTION: yes");
+    } else {
+        println!("TERMINATION PROTECTION: no");
+    }
+
+    println!("{:<34} {:<45}", "TAG", "VALUE");
+    for t in i.tags.iter() {
+        let k = if let Some(k) = t.key.as_deref() {
+            k
+        } else {
+            continue;
+        };
+        let v = t.value.as_deref().unwrap_or("-");
+
+        println!("{:<34} {:<45}", k, v);
+    }
+
+    Ok(())
 }
 
 async fn info(mut l: Level<Stuff>) -> Result<()> {
@@ -2159,7 +2211,8 @@ impl Stuff {
 }
 
 async fn do_instance(mut l: Level<Stuff>) -> Result<()> {
-    l.cmda("list", "ls", "list instances", cmd!(info))?; /* XXX */
+    l.cmda("list", "ls", "list instances", cmd!(info))?;
+    l.hcmd("dump", "dump info about an instance", cmd!(dump))?;
     l.cmd("ip", "get IP address for instance", cmd!(ip))?;
     l.cmd("start", "start an instance", cmd!(start))?;
     l.cmd("reboot", "reboot an instance", cmd!(reboot))?;
