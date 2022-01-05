@@ -2765,7 +2765,7 @@ async fn do_bucket(mut l: Level<Stuff>) -> Result<()> {
 }
 
 async fn do_object_ls(mut l: Level<Stuff>) -> Result<()> {
-    l.usage_args(Some("BUCKET"));
+    l.usage_args(Some("BUCKET [PREFIX]"));
 
     l.optflag("l", "", "include metadata in output");
     l.optflag("L", "", "include metadata in output");
@@ -2773,11 +2773,14 @@ async fn do_object_ls(mut l: Level<Stuff>) -> Result<()> {
     let a = args!(l);
     let s = l.context();
 
-    if a.args().len() != 1 {
-        bad_args!(l, "specify a single bucket name to list");
+    if a.args().len() < 1 {
+        bad_args!(l, "specify a bucket name to list");
+    } else if a.args().len() > 2 {
+        bad_args!(l, "too many arguments");
     }
 
     let bucket = a.args()[0].clone();
+    let prefix = a.args().get(1).cloned();
     let mut nct = None;
 
     loop {
@@ -2786,6 +2789,7 @@ async fn do_object_ls(mut l: Level<Stuff>) -> Result<()> {
             .list_objects_v2(s3::ListObjectsV2Request {
                 bucket: bucket.clone(),
                 continuation_token: nct.clone(),
+                prefix: prefix.clone(),
                 ..Default::default()
             })
             .await?;
