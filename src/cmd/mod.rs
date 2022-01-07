@@ -1,0 +1,11 @@
+pub mod instance;
+pub mod volume;
+pub mod snapshot;
+pub mod image;
+pub mod sg;
+pub mod key;
+pub mod config;
+pub mod type_;
+pub mod s3;
+pub mod subnet;
+pub mod role;
