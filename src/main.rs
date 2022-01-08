@@ -67,9 +67,9 @@ mod prelude {
     pub(crate) use super::util::*;
     pub(crate) use super::{
         destroy_instance, get_instance, get_instance_fuzzy, get_rt_fuzzy,
-        get_vpc_fuzzy, i_create_instance, i_create_snapshot, i_import_volume,
-        i_put_object, i_register_image, i_volume_rm, protect_instance,
-        start_instance, stop_instance,
+        get_sg_fuzzy, get_vpc_fuzzy, i_create_instance, i_create_snapshot,
+        i_import_volume, i_put_object, i_register_image, i_volume_rm,
+        protect_instance, start_instance, stop_instance,
     };
     pub(crate) use super::{InstanceLookup, InstanceOptions, Stuff};
 }

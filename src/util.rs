@@ -1,7 +1,7 @@
 use hiercmd::prelude::*;
-use rusoto_ec2::Tag;
 use rand::distributions::Alphanumeric;
-use rand::{Rng, thread_rng};
+use rand::{thread_rng, Rng};
+use rusoto_ec2::Tag;
 
 pub const WIDTH_PCX: usize = 21;
 pub const WIDTH_VPC: usize = 21;
@@ -37,11 +37,7 @@ impl AsFlag for Option<bool> {
 
 impl AsFlag for bool {
     fn as_flag(&self, f: &str) -> String {
-        if *self {
-            f
-        } else {
-            "-"
-        }.to_string()
+        if *self { f } else { "-" }.to_string()
     }
 }
 
