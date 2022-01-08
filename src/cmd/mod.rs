@@ -9,3 +9,5 @@ pub mod type_;
 pub mod s3;
 pub mod subnet;
 pub mod role;
+pub mod route;
+pub mod vpc;

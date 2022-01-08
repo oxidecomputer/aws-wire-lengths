@@ -7,11 +7,13 @@ pub async fn do_subnet(mut l: Level<Stuff>) -> Result<()> {
 }
 
 async fn do_subnet_ls(mut l: Level<Stuff>) -> Result<()> {
+    l.optopt("V", "vpc", "filter instances by VPC name or ID", "VPC");
+
     l.add_column("id", 24, true);
     l.add_column("name", 20, true);
     l.add_column("cidr", 18, true);
     l.add_column("az", 14, false);
-    l.add_column("vpc", 21, false);
+    l.add_column("vpc", WIDTH_VPC, false);
     l.add_column("flags", 5, true);
     l.add_column("avail", 5, true);
 
@@ -19,9 +21,20 @@ async fn do_subnet_ls(mut l: Level<Stuff>) -> Result<()> {
     let mut t = a.table();
     let s = l.context();
 
+    let filters = if let Some(vpc) = a.opts().opt_str("vpc") {
+        let vpc = get_vpc_fuzzy(s, &vpc).await?;
+        Some(vec![ec2::Filter {
+            name: Some("vpc-id".to_string()),
+            values: Some(vec![vpc.vpc_id.unwrap().to_string()]),
+        }])
+    } else {
+        None
+    };
+
     let res = s
         .ec2()
         .describe_subnets(ec2::DescribeSubnetsRequest {
+            filters,
             ..Default::default()
         })
         .await?;

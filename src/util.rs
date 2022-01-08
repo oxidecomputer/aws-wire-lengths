@@ -3,6 +3,9 @@ use rusoto_ec2::Tag;
 use rand::distributions::Alphanumeric;
 use rand::{Rng, thread_rng};
 
+pub const WIDTH_PCX: usize = 21;
+pub const WIDTH_VPC: usize = 21;
+
 pub trait RowExt {
     fn add_stror(&mut self, n: &str, v: &Option<String>, def: &str);
 }
@@ -29,6 +32,16 @@ impl AsFlag for Option<bool> {
             "-"
         }
         .to_string()
+    }
+}
+
+impl AsFlag for bool {
+    fn as_flag(&self, f: &str) -> String {
+        if *self {
+            f
+        } else {
+            "-"
+        }.to_string()
     }
 }
 

@@ -107,6 +107,8 @@ async fn create_instance(mut l: Level<Stuff>) -> Result<()> {
 }
 
 async fn info(mut l: Level<Stuff>) -> Result<()> {
+    l.optopt("V", "vpc", "filter instances by VPC name or ID", "VPC");
+
     // XXX l.optmulti("T", "", "specify a tag as an extra column", "TAG");
 
     l.add_column("launch", 24, false);
@@ -123,6 +125,10 @@ async fn info(mut l: Level<Stuff>) -> Result<()> {
     let mut t = a.table();
 
     if !a.args().is_empty() {
+        if a.opts().opt_present("vpc") {
+            bad_args!(l, "cannot use -V for specific instance lookup");
+        }
+
         for n in a.args().iter() {
             let i = get_instance_fuzzy(l.context(), n).await?;
 
@@ -140,9 +146,20 @@ async fn info(mut l: Level<Stuff>) -> Result<()> {
     } else {
         let s = l.context();
 
+        let filters = if let Some(vpc) = a.opts().opt_str("vpc") {
+            let vpc = get_vpc_fuzzy(s, &vpc).await?;
+            Some(vec![ec2::Filter {
+                name: Some("vpc-id".to_string()),
+                values: Some(vec![vpc.vpc_id.unwrap().to_string()]),
+            }])
+        } else {
+            None
+        };
+
         let res = s
             .ec2()
             .describe_instances(ec2::DescribeInstancesRequest {
+                filters,
                 ..Default::default()
             })
             .await?;
@@ -672,4 +689,3 @@ async fn dump(mut l: Level<Stuff>) -> Result<()> {
 
     Ok(())
 }
-

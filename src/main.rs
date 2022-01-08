@@ -66,9 +66,10 @@ mod prelude {
 
     pub(crate) use super::util::*;
     pub(crate) use super::{
-        destroy_instance, get_instance, get_instance_fuzzy, i_create_instance,
-        i_create_snapshot, i_import_volume, i_put_object, i_register_image,
-        i_volume_rm, protect_instance, start_instance, stop_instance,
+        destroy_instance, get_instance, get_instance_fuzzy, get_rt_fuzzy,
+        get_vpc_fuzzy, i_create_instance, i_create_snapshot, i_import_volume,
+        i_put_object, i_register_image, i_volume_rm, protect_instance,
+        start_instance, stop_instance,
     };
     pub(crate) use super::{InstanceLookup, InstanceOptions, Stuff};
 }
@@ -79,12 +80,14 @@ use cmd::image::{ami_from_file, do_image};
 use cmd::instance::do_instance;
 use cmd::key::do_key;
 use cmd::role::do_role;
+use cmd::route::do_route;
 use cmd::s3::do_s3;
 use cmd::sg::do_sg;
 use cmd::snapshot::do_snapshot;
 use cmd::subnet::do_subnet;
 use cmd::type_::do_type;
 use cmd::volume::do_volume;
+use cmd::vpc::do_vpc;
 
 use util::*;
 
@@ -922,6 +925,88 @@ async fn get_volume(s: &Stuff, lookup: VolumeLookup) -> Result<Volume> {
     Ok(out.pop().unwrap())
 }
 
+fn one_ping_only<T>(noun: &str, filter: &str, v: Option<Vec<T>>) -> Result<T> {
+    if let Some(mut v) = v {
+        if v.len() == 1 {
+            return Ok(v.pop().unwrap());
+        }
+
+        if v.len() > 1 {
+            bail!("more than one {} matched filter \"{}\"", noun, filter);
+        }
+    }
+
+    bail!("could not find a {} matching \"{}\"", noun, filter);
+}
+
+async fn get_vpc_fuzzy(s: &Stuff, lookuparg: &str) -> Result<ec2::Vpc> {
+    let filters = Some(if lookuparg.starts_with("vpc-") {
+        vec![ec2::Filter {
+            name: Some("vpc-id".to_string()),
+            values: Some(vec![lookuparg.into()]),
+        }]
+    } else {
+        vec![ec2::Filter {
+            name: Some("tag:Name".to_string()),
+            values: Some(vec![lookuparg.into()]),
+        }]
+    });
+
+    let res = s
+        .ec2()
+        .describe_vpcs(ec2::DescribeVpcsRequest {
+            filters,
+            ..Default::default()
+        })
+        .await?;
+
+    one_ping_only("VPC", lookuparg, res.vpcs)
+}
+
+async fn get_rt_fuzzy(
+    s: &Stuff,
+    lookuparg: &str,
+    direct_only: bool,
+) -> Result<ec2::RouteTable> {
+    let filters = Some(if lookuparg.starts_with("rtb-") {
+        vec![ec2::Filter {
+            name: Some("route-table-id".to_string()),
+            values: Some(vec![lookuparg.into()]),
+        }]
+    } else if !direct_only && lookuparg.starts_with("vpc-") {
+        vec![
+            ec2::Filter {
+                name: Some("vpc-id".to_string()),
+                values: Some(vec![lookuparg.into()]),
+            },
+            ec2::Filter {
+                name: Some("association.main".to_string()),
+                values: Some(vec!["true".to_string()]),
+            },
+        ]
+    } else if !direct_only && lookuparg.starts_with("subnet-") {
+        vec![ec2::Filter {
+            name: Some("association.subnet-id".to_string()),
+            values: Some(vec![lookuparg.into()]),
+        }]
+    } else {
+        vec![ec2::Filter {
+            name: Some("tag:Name".to_string()),
+            values: Some(vec![lookuparg.into()]),
+        }]
+    });
+
+    let res = s
+        .ec2()
+        .describe_route_tables(ec2::DescribeRouteTablesRequest {
+            filters,
+            ..Default::default()
+        })
+        .await?;
+
+    one_ping_only("route table", lookuparg, res.route_tables)
+}
+
 async fn get_instance_fuzzy(s: &Stuff, lookuparg: &str) -> Result<Instance> {
     let lookup = if lookuparg.starts_with("i-") {
         InstanceLookup::ById(lookuparg.to_string())
@@ -1204,7 +1289,9 @@ async fn main() -> Result<()> {
     )?;
     l.cmd("sg", "security group management", cmd!(do_sg))?;
     l.cmd("key", "SSH key management", cmd!(do_key))?;
+    l.cmd("vpc", "VPC management", cmd!(do_vpc))?;
     l.cmd("subnet", "subnet management", cmd!(do_subnet))?;
+    l.cmda("route", "rt", "routing table management", cmd!(do_route))?;
     l.cmd(
         "config",
         "manage account- or region-level configuration",
