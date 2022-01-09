@@ -75,6 +75,7 @@ mod prelude {
 }
 
 mod cmd;
+use cmd::az::do_az;
 use cmd::config::do_config;
 use cmd::image::{ami_from_file, do_image};
 use cmd::instance::do_instance;
@@ -1313,6 +1314,7 @@ async fn main() -> Result<()> {
         cmd!(do_config),
     )?;
     l.cmd("type", "instance type management", cmd!(do_type))?;
+    l.cmd("az", "availability zone management", cmd!(do_az))?;
     l.cmda("s3", "s", "S3 object storage", cmd!(do_s3))?;
     /*
      * XXX These are used in some scripts, so leave them (but hidden) for now.

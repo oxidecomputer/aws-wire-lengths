@@ -11,3 +11,4 @@ pub mod subnet;
 pub mod type_;
 pub mod volume;
 pub mod vpc;
+pub mod az;
