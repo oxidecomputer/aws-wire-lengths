@@ -69,7 +69,7 @@ mod prelude {
         destroy_instance, get_instance, get_instance_fuzzy, get_rt_fuzzy,
         get_sg_fuzzy, get_vpc_fuzzy, i_create_instance, i_create_snapshot,
         i_import_volume, i_put_object, i_register_image, i_volume_rm,
-        protect_instance, start_instance, stop_instance,
+        protect_instance, start_instance, stop_instance, filter_vpc_fuzzy,
     };
     pub(crate) use super::{InstanceLookup, InstanceOptions, Stuff};
 }
@@ -937,6 +937,21 @@ fn one_ping_only<T>(noun: &str, filter: &str, v: Option<Vec<T>>) -> Result<T> {
     }
 
     bail!("could not find a {} matching \"{}\"", noun, filter);
+}
+
+async fn filter_vpc_fuzzy(
+    s: &Stuff,
+    optarg: Option<String>,
+) -> Result<Option<Vec<ec2::Filter>>> {
+    if let Some(optarg) = optarg.as_deref() {
+        let vpc = get_vpc_fuzzy(s, optarg).await?;
+        Ok(Some(vec![ec2::Filter {
+            name: ss("vpc-id"),
+            values: Some(vec![vpc.vpc_id.unwrap().to_string()]),
+        }]))
+    } else {
+        Ok(None)
+    }
 }
 
 async fn get_vpc_fuzzy(s: &Stuff, lookuparg: &str) -> Result<ec2::Vpc> {

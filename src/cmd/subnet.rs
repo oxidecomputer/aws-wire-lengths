@@ -21,15 +21,7 @@ async fn do_subnet_ls(mut l: Level<Stuff>) -> Result<()> {
     let mut t = a.table();
     let s = l.context();
 
-    let filters = if let Some(vpc) = a.opts().opt_str("vpc") {
-        let vpc = get_vpc_fuzzy(s, &vpc).await?;
-        Some(vec![ec2::Filter {
-            name: Some("vpc-id".to_string()),
-            values: Some(vec![vpc.vpc_id.unwrap().to_string()]),
-        }])
-    } else {
-        None
-    };
+    let filters = filter_vpc_fuzzy(s, a.opts().opt_str("vpc")).await?;
 
     let res = s
         .ec2()

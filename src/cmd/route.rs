@@ -48,24 +48,16 @@ async fn find(mut l: Level<Stuff>) -> Result<()> {
 }
 
 async fn list(mut l: Level<Stuff>) -> Result<()> {
+    l.optopt("V", "vpc", "filter instances by VPC name or ID", "VPC");
+
     l.add_column("id", 24, true);
     l.add_column("name", 24, true);
-
-    l.optopt("V", "vpc", "filter instances by VPC name or ID", "VPC");
 
     let a = no_args!(l);
     let s = l.context();
     let mut t = a.table();
 
-    let filters = if let Some(vpc) = a.opts().opt_str("vpc") {
-        let vpc = get_vpc_fuzzy(s, &vpc).await?;
-        Some(vec![ec2::Filter {
-            name: Some("vpc-id".to_string()),
-            values: Some(vec![vpc.vpc_id.unwrap().to_string()]),
-        }])
-    } else {
-        None
-    };
+    let filters = filter_vpc_fuzzy(s, a.opts().opt_str("vpc")).await?;
 
     let res = s
         .ec2()

@@ -7,6 +7,8 @@ pub async fn do_sg(mut l: Level<Stuff>) -> Result<()> {
 }
 
 async fn do_sg_ls(mut l: Level<Stuff>) -> Result<()> {
+    l.optopt("V", "vpc", "filter instances by VPC name or ID", "VPC");
+
     l.add_column("id", 20, true);
     l.add_column("name", 28, true);
     l.add_column("vpc", WIDTH_VPC, true);
@@ -17,9 +19,12 @@ async fn do_sg_ls(mut l: Level<Stuff>) -> Result<()> {
     let mut t = a.table();
     let s = l.context();
 
+    let filters = filter_vpc_fuzzy(s, a.opts().opt_str("vpc")).await?;
+
     let res = s
         .ec2()
         .describe_security_groups(ec2::DescribeSecurityGroupsRequest {
+            filters,
             ..Default::default()
         })
         .await?;
