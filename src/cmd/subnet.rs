@@ -2,8 +2,49 @@ use crate::prelude::*;
 
 pub async fn do_subnet(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list subnets", cmd!(do_subnet_ls))?;
+    l.cmd("create", "create a subnet", cmd!(create))?;
 
     sel!(l).run().await
+}
+
+async fn create(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("NAME CIDR"));
+
+    l.reqopt("V", "vpc", "VPC name or ID for subnet creation", "VPC");
+    l.reqopt("A", "az", "availability zone for subnet creation", "VPC");
+
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 2 {
+        bad_args!(l, "specify the name and CIDR block for the subnet");
+    }
+    let name = a.args().get(0).unwrap().to_string();
+    let cidr_block = a.args().get(0).unwrap().to_string();
+
+    let vpc = get_vpc_fuzzy(s, &a.opts().opt_str("vpc").unwrap()).await?;
+
+    let tag_specifications = Some(vec![ec2::TagSpecification {
+        resource_type: ss("subnet"),
+        tags: Some(vec![ec2::Tag {
+            key: ss("Name"),
+            value: Some(name),
+        }]),
+    }]);
+
+    let res = s
+        .ec2()
+        .create_subnet(ec2::CreateSubnetRequest {
+            availability_zone: a.opts().opt_str("az"),
+            cidr_block,
+            tag_specifications,
+            vpc_id: vpc.vpc_id.unwrap(),
+            ..Default::default()
+        })
+        .await?;
+
+    println!("{}", res.subnet.unwrap().subnet_id.unwrap());
+    Ok(())
 }
 
 async fn do_subnet_ls(mut l: Level<Stuff>) -> Result<()> {
