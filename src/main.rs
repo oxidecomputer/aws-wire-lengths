@@ -68,6 +68,8 @@ use cmd::type_::do_type;
 use cmd::volume::do_volume;
 use cmd::vpc::do_vpc;
 
+mod sdk;
+
 #[derive(Default)]
 pub struct Stuff {
     region_ec2: Region,
@@ -78,6 +80,7 @@ pub struct Stuff {
     ic: Option<ec2ic::Ec2InstanceConnectClient>,
     sts: Option<sts::StsClient>,
     credprov: Option<Box<dyn ProvideAwsCredentials + Send + Sync>>,
+    more: Option<sdk::More>,
 }
 
 #[allow(dead_code)]
@@ -112,6 +115,10 @@ impl Stuff {
 
     fn credprov(&self) -> &dyn ProvideAwsCredentials {
         self.credprov.as_deref().unwrap()
+    }
+
+    fn more(&self) -> &sdk::More {
+        self.more.as_ref().unwrap()
     }
 }
 
@@ -230,6 +237,12 @@ async fn main() -> Result<()> {
             stuff.region_sts.clone(),
         ));
     };
+
+    let n = s.context().region_ec2.name().to_string();
+
+    s.context_mut().more = Some(
+        sdk::More::new(Some(&n)).await?
+    );
 
     s.run().await
 }

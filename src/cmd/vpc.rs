@@ -97,12 +97,7 @@ async fn do_vpc_ls(mut l: Level<Stuff>) -> Result<()> {
     let mut t = a.table();
     let s = l.context();
 
-    let res = s
-        .ec2()
-        .describe_vpcs(ec2::DescribeVpcsRequest {
-            ..Default::default()
-        })
-        .await?;
+    let res = s.more().ec2().describe_vpcs().send().await?;
 
     let empty = Vec::new();
     for vpc in res.vpcs.as_ref().unwrap_or(&empty) {
