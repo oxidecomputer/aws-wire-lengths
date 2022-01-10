@@ -40,7 +40,7 @@ async fn do_object_ls(mut l: Level<Stuff>) -> Result<()> {
     let a = args!(l);
     let s = l.context();
 
-    if a.args().len() < 1 {
+    if a.args().is_empty() {
         bad_args!(l, "specify a bucket name to list");
     } else if a.args().len() > 2 {
         bad_args!(l, "too many arguments");
@@ -149,7 +149,7 @@ async fn do_object_get(mut l: Level<Stuff>) -> Result<()> {
                 return Ok(());
             }
 
-            out.write_all(&mut buf)?;
+            out.write_all(&buf)?;
         }
     } else {
         bail!("no body?");

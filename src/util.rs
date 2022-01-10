@@ -1,7 +1,9 @@
+use anyhow::{bail, Result};
 use hiercmd::prelude::*;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use rusoto_ec2::Tag;
+use std::io::Write;
 
 pub const WIDTH_PCX: usize = 21;
 pub const WIDTH_VPC: usize = 21;
@@ -71,4 +73,39 @@ pub fn genkey(len: usize) -> String {
         .take(len)
         .map(|c| c as char)
         .collect()
+}
+
+pub fn one_ping_only<T>(
+    noun: &str,
+    filter: &str,
+    v: Option<Vec<T>>,
+) -> Result<T> {
+    if let Some(mut v) = v {
+        if v.len() == 1 {
+            return Ok(v.pop().unwrap());
+        }
+
+        if v.len() > 1 {
+            bail!("more than one {} matched filter \"{}\"", noun, filter);
+        }
+    }
+
+    bail!("could not find a {} matching \"{}\"", noun, filter);
+}
+
+pub fn sleep(ms: u64) {
+    std::thread::sleep(std::time::Duration::from_millis(ms));
+}
+
+pub trait EventWriterExt {
+    fn simple_tag(&mut self, n: &str, v: &str) -> Result<()>;
+}
+
+impl<T: Write> EventWriterExt for xml::EventWriter<T> {
+    fn simple_tag(&mut self, n: &str, v: &str) -> Result<()> {
+        self.write(xml::writer::XmlEvent::start_element(n))?;
+        self.write(xml::writer::XmlEvent::characters(v))?;
+        self.write(xml::writer::XmlEvent::end_element())?;
+        Ok(())
+    }
 }

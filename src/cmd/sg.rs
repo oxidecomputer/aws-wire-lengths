@@ -2,6 +2,7 @@ use crate::prelude::*;
 
 pub async fn do_sg(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list security groups", cmd!(do_sg_ls))?;
+    l.cmd("dump", "raw dump of a security group", cmd!(dump))?;
 
     sel!(l).run().await
 }
@@ -53,6 +54,31 @@ async fn do_sg_ls(mut l: Level<Stuff>) -> Result<()> {
     }
 
     print!("{}", t.output()?);
+
+    Ok(())
+}
+
+/*
+ * XXX Adjusting security groups seems like a morass.
+ *
+ * ModifySecurityGroupRules ?
+ * RevokeSecurityGroupIngress and RevokeSecurityGroupEgress ?
+ * AuthorizeSecurityGroupIngress and AuthorizeSecurityGroupEgress ?
+ */
+
+async fn dump(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("SG-ID"));
+
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 1 {
+        bad_args!(l, "specify the security group to show");
+    }
+
+    let sg = get_sg_fuzzy(s, a.args().get(0).unwrap()).await?;
+
+    println!("{:#?}", sg);
 
     Ok(())
 }

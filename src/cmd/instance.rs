@@ -13,6 +13,8 @@ pub async fn do_instance(mut l: Level<Stuff>) -> Result<()> {
         "disable termination protection",
         cmd!(unprotect),
     )?;
+    l.cmd("spoof", "disable source/destination check", cmd!(spoof))?;
+    l.cmd("nospoof", "enable source/destination check", cmd!(nospoof))?;
     l.cmd("create", "create an instance", cmd!(create_instance))?;
     l.cmd("destroy", "destroy an instance", cmd!(destroy))?;
     l.cmda(
@@ -150,7 +152,7 @@ async fn info(mut l: Level<Stuff>) -> Result<()> {
             let vpc = get_vpc_fuzzy(s, &vpc).await?;
             Some(vec![ec2::Filter {
                 name: Some("vpc-id".to_string()),
-                values: Some(vec![vpc.vpc_id.unwrap().to_string()]),
+                values: Some(vec![vpc.vpc_id.unwrap()]),
             }])
         } else {
             None
@@ -177,7 +179,10 @@ async fn info(mut l: Level<Stuff>) -> Result<()> {
                         r.add_str("id", i.instance_id.as_deref().unwrap());
                         r.add_stror("name", &i.tags.tag("Name"), "-");
                         r.add_str("launch", i.launch_time.as_deref().unwrap());
-                        r.add_str("ip", pubip.unwrap_or(privip.unwrap_or("-")));
+                        r.add_str(
+                            "ip",
+                            pubip.unwrap_or_else(|| privip.unwrap_or("-")),
+                        );
                         r.add_str(
                             "state",
                             i.state.as_ref().unwrap().name.as_deref().unwrap(),
@@ -573,6 +578,42 @@ async fn reboot(mut l: Level<Stuff>) -> Result<()> {
     Ok(())
 }
 
+async fn spoof(mut l: Level<Stuff>) -> Result<()> {
+    let a = args!(l);
+
+    if a.args().len() != 1 {
+        bail!("expect the name of just one instance");
+    }
+
+    let i = get_instance_fuzzy(l.context(), a.args().get(0).unwrap()).await?;
+
+    println!("enabling spoofing for instance: {:?}", i);
+
+    instance_spoofing(l.context(), &i.id, true).await?;
+
+    println!("all done!");
+
+    Ok(())
+}
+
+async fn nospoof(mut l: Level<Stuff>) -> Result<()> {
+    let a = args!(l);
+
+    if a.args().len() != 1 {
+        bail!("expect the name of just one instance");
+    }
+
+    let i = get_instance_fuzzy(l.context(), a.args().get(0).unwrap()).await?;
+
+    println!("disabling spoofing for instance: {:?}", i);
+
+    instance_spoofing(l.context(), &i.id, false).await?;
+
+    println!("all done!");
+
+    Ok(())
+}
+
 async fn protect(mut l: Level<Stuff>) -> Result<()> {
     let a = args!(l);
 
@@ -688,4 +729,76 @@ async fn dump(mut l: Level<Stuff>) -> Result<()> {
     }
 
     Ok(())
+}
+
+struct InstanceOptions {
+    ami_id: String,
+    type_name: String,
+    key_name: String,
+    tags: HashMap<String, String>,
+    root_size_gb: u32,
+    subnet_id: String,
+    sg_id: String,
+    user_data: Option<String>,
+    public_ip: Option<bool>,
+}
+
+async fn i_create_instance(s: &Stuff, io: &InstanceOptions) -> Result<String> {
+    let tag_specifications = if !io.tags.is_empty() {
+        let mut tags = Vec::new();
+        for (k, v) in io.tags.iter() {
+            tags.push(ec2::Tag {
+                key: ss(k.as_str()),
+                value: ss(v.as_str()),
+            });
+        }
+        Some(vec![ec2::TagSpecification {
+            resource_type: ss("instance"),
+            tags: Some(tags),
+        }])
+    } else {
+        None
+    };
+
+    let rir = ec2::RunInstancesRequest {
+        image_id: ss(&io.ami_id),
+        instance_type: ss(&io.type_name),
+        key_name: ss(&io.key_name),
+        min_count: 1,
+        max_count: 1,
+        tag_specifications,
+        block_device_mappings: Some(vec![ec2::BlockDeviceMapping {
+            device_name: ss("/dev/sda1"),
+            ebs: Some(ec2::EbsBlockDevice {
+                volume_size: Some(io.root_size_gb as i64),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }]),
+        network_interfaces: Some(vec![
+            ec2::InstanceNetworkInterfaceSpecification {
+                device_index: Some(0),
+                subnet_id: ss(&io.subnet_id),
+                groups: Some(vec![io.sg_id.to_string()]),
+                associate_public_ip_address: io.public_ip,
+                ..Default::default()
+            },
+        ]),
+        user_data: io.user_data.as_deref().map(base64::encode),
+        ..Default::default()
+    };
+
+    let res = s.ec2().run_instances(rir).await?;
+    let mut ids = Vec::new();
+    if let Some(insts) = &res.instances {
+        for i in insts.iter() {
+            ids.push(i.instance_id.as_deref().unwrap().to_string());
+        }
+    }
+
+    if ids.len() != 1 {
+        bail!("wanted one instance, got {:?}", ids);
+    } else {
+        Ok(ids[0].to_string())
+    }
 }

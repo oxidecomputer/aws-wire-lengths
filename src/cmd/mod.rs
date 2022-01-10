@@ -1,3 +1,4 @@
+pub mod az;
 pub mod config;
 pub mod image;
 pub mod instance;
@@ -11,4 +12,3 @@ pub mod subnet;
 pub mod type_;
 pub mod volume;
 pub mod vpc;
-pub mod az;

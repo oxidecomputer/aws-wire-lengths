@@ -2,6 +2,7 @@ use crate::prelude::*;
 
 pub async fn do_vpc(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list VPCs", cmd!(do_vpc_ls))?;
+    l.cmd("id", "lookup VPC ID", cmd!(do_vpc_id))?;
     l.cmd("peering", "manage peering connections", cmd!(do_peering))?;
 
     sel!(l).run().await
@@ -119,6 +120,21 @@ async fn do_vpc_ls(mut l: Level<Stuff>) -> Result<()> {
     }
 
     print!("{}", t.output()?);
+
+    Ok(())
+}
+
+async fn do_vpc_id(mut l: Level<Stuff>) -> Result<()> {
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 1 {
+        bad_args!(l, "specify VPC name to look up");
+    }
+
+    let vpc = get_vpc_fuzzy(s, a.args().get(0).unwrap()).await?;
+
+    println!("{}", vpc.vpc_id.unwrap());
 
     Ok(())
 }
