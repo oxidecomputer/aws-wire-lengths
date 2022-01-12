@@ -11,7 +11,7 @@ async fn create(mut l: Level<Stuff>) -> Result<()> {
     l.usage_args(Some("NAME CIDR"));
 
     l.reqopt("V", "vpc", "VPC name or ID for subnet creation", "VPC");
-    l.reqopt("A", "az", "availability zone for subnet creation", "VPC");
+    l.reqopt("A", "az", "availability zone for subnet creation", "AZ");
 
     let a = args!(l);
     let s = l.context();
@@ -53,7 +53,7 @@ async fn do_subnet_ls(mut l: Level<Stuff>) -> Result<()> {
     l.add_column("id", 24, true);
     l.add_column("name", 20, true);
     l.add_column("cidr", 18, true);
-    l.add_column("az", 14, false);
+    l.add_column("az", WIDTH_AZ, false);
     l.add_column("vpc", WIDTH_VPC, false);
     l.add_column("flags", 5, true);
     l.add_column("avail", 5, true);

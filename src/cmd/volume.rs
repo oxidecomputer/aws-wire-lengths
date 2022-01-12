@@ -16,7 +16,7 @@ async fn volumes(mut l: Level<Stuff>) -> Result<()> {
     l.add_column("size", 5, false);
     l.add_column("snapshot", 22, false);
     l.add_column("name", 24, false);
-    l.add_column("az", 14, false);
+    l.add_column("az", WIDTH_AZ, false);
 
     let a = no_args!(l);
     let mut t = a.table();

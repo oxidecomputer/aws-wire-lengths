@@ -35,6 +35,7 @@ pub struct Instance {
     pub launch: String,
     pub tags: Vec<Tag>,
     pub nics: Vec<String>,
+    pub az: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -312,6 +313,9 @@ async fn get_instance_x(
                         .as_ref()
                         .map(|o| o.to_vec())
                         .unwrap_or_default(),
+                    az: inst.placement.as_ref().map(|p| {
+                        p.availability_zone.as_ref().unwrap().to_string()
+                    }),
                 });
             }
         }

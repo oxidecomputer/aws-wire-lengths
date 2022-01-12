@@ -15,7 +15,9 @@ impl More {
         .or_default_provider()
         .or_else(Region::new("us-east-1"));
 
-        let r = rp.region().await
+        let r = rp
+            .region()
+            .await
             .ok_or_else(|| anyhow!("could not get region for EC2"))?;
 
         let mut m = More {

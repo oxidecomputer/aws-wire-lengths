@@ -119,6 +119,7 @@ async fn info(mut l: Level<Stuff>) -> Result<()> {
     l.add_column("ip", 15, true);
     l.add_column("state", 16, true);
     l.add_column("type", 12, false);
+    l.add_column("az", WIDTH_AZ, false);
     // XXX for tag in s.args.opt_strs("T") {
     // XXX     l.add_column(&tag, 20, true);
     // XXX }
@@ -140,6 +141,7 @@ async fn info(mut l: Level<Stuff>) -> Result<()> {
             r.add_str("launch", &i.launch);
             r.add_stror("ip", &i.ip, "-");
             r.add_str("state", &i.state);
+            r.add_stror("az", &i.az, "-");
             // XXX for tag in s.args.opt_strs("T") {
             // XXX     r.add_str(&tag, "-"); /* XXX */
             // XXX }
@@ -186,6 +188,16 @@ async fn info(mut l: Level<Stuff>) -> Result<()> {
                         r.add_str(
                             "state",
                             i.state.as_ref().unwrap().name.as_deref().unwrap(),
+                        );
+                        r.add_stror(
+                            "az",
+                            &i.placement.as_ref().map(|p| {
+                                p.availability_zone
+                                    .as_ref()
+                                    .unwrap()
+                                    .to_string()
+                            }),
+                            "-",
                         );
 
                         // XXX for tag in s.args.opt_strs("T") {
