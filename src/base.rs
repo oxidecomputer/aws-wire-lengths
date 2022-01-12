@@ -336,6 +336,30 @@ async fn get_instance_x(
     Ok(out.pop().unwrap())
 }
 
+pub async fn get_vol_fuzzy(
+    s: &Stuff,
+    lookuparg: &str,
+) -> Result<aws_sdk_ec2::model::Volume> {
+    let res = s
+        .more()
+        .ec2()
+        .describe_volumes()
+        .filters(
+            aws_sdk_ec2::model::Filter::builder()
+                .name(if lookuparg.starts_with("vol-") {
+                    "vol-id"
+                } else {
+                    "tag:Name"
+                })
+                .values(lookuparg)
+                .build(),
+        )
+        .send()
+        .await?;
+
+    one_ping_only("volume", lookuparg, res.volumes)
+}
+
 pub async fn get_vpc_fuzzy(s: &Stuff, lookuparg: &str) -> Result<ec2::Vpc> {
     let filters = Some(if lookuparg.starts_with("vpc-") {
         vec![ec2::Filter {

@@ -3,6 +3,8 @@ use crate::prelude::*;
 pub async fn do_volume(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list volumes", cmd!(volumes))?; /* XXX */
     l.cmda("destroy", "rm", "destroy a volume", cmd!(do_volume_rm))?;
+    l.cmd("create", "create a volume", cmd!(do_volume_create))?;
+    l.cmd("attach", "attach a volume", cmd!(do_volume_attach))?;
 
     sel!(l).run().await
 }
@@ -95,5 +97,72 @@ async fn do_volume_rm(mut l: Level<Stuff>) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+async fn do_volume_create(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("NAME SIZE_GB"));
+
+    l.reqopt("A", "az", "availability zone for subnet creation", "AZ");
+    l.optopt("t", "type", "volume type", "TYPE");
+
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 2 {
+        bad_args!(l, "specify volume name and size in gigabytes");
+    }
+
+    let size: i32 = a.args().get(1).unwrap().parse()?;
+
+    let tags = aws_sdk_ec2::model::TagSpecification::builder()
+        .resource_type(aws_sdk_ec2::model::ResourceType::Volume)
+        .tags(
+            aws_sdk_ec2::model::Tag::builder()
+                .key("Name")
+                .value(a.args().get(0).unwrap())
+                .build(),
+        )
+        .build();
+
+    let res = s
+        .more()
+        .ec2()
+        .create_volume()
+        .tag_specifications(tags)
+        .size(size)
+        .set_availability_zone(a.opts().opt_str("az"))
+        .set_volume_type(a.opts().opt_str("type").map(|t| t.as_str().into()))
+        .send()
+        .await?;
+
+    println!("{:#?}", res);
+    Ok(())
+}
+
+async fn do_volume_attach(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("INSTANCE VOLUME DEVPATH"));
+
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 3 {
+        bad_args!(l, "specify instance, volume, and device name");
+    }
+
+    let i = get_instance_fuzzy(s, a.args().get(0).unwrap().as_str()).await?;
+    let v = get_vol_fuzzy(s, a.args().get(1).unwrap().as_str()).await?;
+
+    let res = s
+        .more()
+        .ec2()
+        .attach_volume()
+        .instance_id(&i.id)
+        .volume_id(v.volume_id().unwrap())
+        .device(a.args().get(2).unwrap())
+        .send()
+        .await?;
+
+    println!("{:#?}", res);
     Ok(())
 }
