@@ -28,6 +28,11 @@ pub async fn do_instance(mut l: Level<Stuff>) -> Result<()> {
         "connect to the serial console of a guest",
         cmd!(sercons),
     )?;
+    l.cmd(
+        "volumes",
+        "show volumes attached to this instance",
+        cmd!(volumes),
+    )?;
 
     sel!(l).run().await
 }
@@ -695,6 +700,46 @@ async fn ip(mut l: Level<Stuff>) -> Result<()> {
     } else {
         bail!("no IP address for instance {} ({})", n, i.id);
     }
+}
+
+async fn volumes(mut l: Level<Stuff>) -> Result<()> {
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 1 {
+        bail!("specify just one instance");
+    }
+    let n = a.args()[0].as_str();
+
+    let i = get_instance_fuzzy(l.context(), n).await?;
+
+    let res = s
+        .more()
+        .ec2()
+        .describe_volumes()
+        .filters(
+            aws_sdk_ec2::model::Filter::builder()
+                .name("attachment.instance-id")
+                .values(&i.id)
+                .build(),
+        )
+        .send()
+        .await?;
+
+    for vol in res.volumes().unwrap_or_default() {
+        for att in vol.attachments().unwrap_or_default() {
+            println!(
+                "{} name {:?} size {} vst {:?} ast {:?} dev {:?}",
+                vol.volume_id().unwrap(),
+                vol.tags.tag("Name"),
+                vol.size().unwrap_or(0),
+                vol.state(),
+                att.state(),
+                att.device(),
+            );
+        }
+    }
+    Ok(())
 }
 
 async fn dump(mut l: Level<Stuff>) -> Result<()> {
