@@ -15,7 +15,7 @@ set -o xtrace
 rustc --version
 
 banner build
-ptime -m cargo build --release
+ptime -m cargo build --release --verbose
 
 banner package
 cp target/release/aws-wire-lengths /work/awl
