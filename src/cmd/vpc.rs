@@ -2,6 +2,7 @@ use crate::prelude::*;
 
 pub async fn do_vpc(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list VPCs", cmd!(do_vpc_ls))?;
+    l.cmd("create", "create a VPC", cmd!(do_vpc_create))?;
     l.cmd("id", "lookup VPC ID", cmd!(do_vpc_id))?;
     l.cmd("peering", "manage peering connections", cmd!(do_peering))?;
 
@@ -23,6 +24,45 @@ async fn do_peering(mut l: Level<Stuff>) -> Result<()> {
     )?;
 
     sel!(l).run().await
+}
+
+async fn do_vpc_create(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("NAME CIDR"));
+
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 2 {
+        bad_args!(l, "specify VPC name and CIDR block");
+    }
+
+    let tags = aws_sdk_ec2::model::TagSpecification::builder()
+        .resource_type(aws_sdk_ec2::model::ResourceType::Vpc)
+        .tags(
+            aws_sdk_ec2::model::Tag::builder()
+                .key("Name")
+                .value(a.args().get(0).unwrap())
+                .build(),
+        )
+        .build();
+
+    let res = s
+        .more()
+        .ec2()
+        .create_vpc()
+        .tag_specifications(tags)
+        .cidr_block(a.args().get(1).unwrap().to_string())
+        .send()
+        .await?;
+
+    let id = res
+        .vpc()
+        .ok_or_else(|| anyhow!("no VPC in response?"))?
+        .vpc_id()
+        .ok_or_else(|| anyhow!("no VPC ID in response?"))?;
+
+    println!("{}", id);
+    Ok(())
 }
 
 async fn do_peering_rm(mut l: Level<Stuff>) -> Result<()> {
