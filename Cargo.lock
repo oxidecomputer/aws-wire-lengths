@@ -120,6 +120,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-s3"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d70be50ac07c3c2b5f37056271856ac00190e80c19c76c58bcbee5be0b63ec9"
+dependencies = [
+ "aws-endpoint",
+ "aws-http",
+ "aws-sig-auth",
+ "aws-sigv4",
+ "aws-smithy-async",
+ "aws-smithy-client",
+ "aws-smithy-eventstream",
+ "aws-smithy-http",
+ "aws-smithy-http-tower",
+ "aws-smithy-types",
+ "aws-smithy-xml",
+ "aws-types",
+ "bytes",
+ "http",
+ "md5",
+ "tokio-stream",
+ "tower",
+]
+
+[[package]]
 name = "aws-sdk-sso"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -170,6 +195,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4012b5192350b5403aba19a01a5a3b1768158dab936c4269d89760970d4812bc"
 dependencies = [
  "aws-sigv4",
+ "aws-smithy-eventstream",
  "aws-smithy-http",
  "aws-types",
  "http",
@@ -183,7 +209,9 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41f4b9c0c3a34e5152a0cd5e43b8f2cfd780e3bd7a245948d8787e051095ac4c"
 dependencies = [
+ "aws-smithy-eventstream",
  "aws-smithy-http",
+ "bytes",
  "form_urlencoded",
  "hex",
  "http",
@@ -232,11 +260,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-smithy-eventstream"
+version = "0.36.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f98bcfcb063d29c7cc7bb0a64830afe606090de75533c10a11a05460d814e8d9"
+dependencies = [
+ "aws-smithy-types",
+ "bytes",
+ "crc32fast",
+]
+
+[[package]]
 name = "aws-smithy-http"
 version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c8bbe92ecdc4e39a612359b09994c45d000591d4951aa7343443f44b47e6696"
 dependencies = [
+ "aws-smithy-eventstream",
  "aws-smithy-types",
  "bytes",
  "bytes-utils",
@@ -327,6 +367,7 @@ dependencies = [
  "anyhow",
  "aws-config",
  "aws-sdk-ec2",
+ "aws-sdk-s3",
  "aws-types",
  "base64",
  "bytes",
@@ -344,6 +385,7 @@ dependencies = [
  "rusoto_sts",
  "serde",
  "serde-xml-rs",
+ "serde_json",
  "tokio",
  "tokio-util",
  "toml",
@@ -948,6 +990,12 @@ dependencies = [
  "digest",
  "opaque-debug",
 ]
+
+[[package]]
+name = "md5"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 
 [[package]]
 name = "memchr"

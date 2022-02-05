@@ -238,9 +238,10 @@ async fn main() -> Result<()> {
         ));
     };
 
-    let n = s.context().region_ec2.name().to_string();
+    let ne = s.context().region_ec2.name().to_string();
+    let ns = s.context().region_s3.name().to_string();
 
-    s.context_mut().more = Some(sdk::More::new(Some(&n)).await?);
+    s.context_mut().more = Some(sdk::More::new(Some(&ne), Some(&ns)).await?);
 
     s.run().await
 }

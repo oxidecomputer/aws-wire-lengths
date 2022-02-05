@@ -8,14 +8,17 @@ async fn do_bucket_ls(mut l: Level<Stuff>) -> Result<()> {
     let mut t = a.table();
     let s = l.context();
 
-    let res = s.s3().list_buckets().await?;
+    let res = s.more().s3().list_buckets().send().await?;
 
-    let x = Vec::new();
-    for b in res.buckets.as_ref().unwrap_or(&x) {
+    for b in res.buckets().unwrap_or_default() {
         let mut r = Row::default();
 
         r.add_stror("name", &b.name, "?");
-        r.add_stror("creation", &b.creation_date, "-");
+        r.add_stror(
+            "creation",
+            &b.creation_date.map(|cd| format!("{:?}", cd)),
+            "-",
+        );
 
         t.add_row(r);
     }
@@ -27,8 +30,170 @@ async fn do_bucket_ls(mut l: Level<Stuff>) -> Result<()> {
 
 async fn do_bucket(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list buckets", cmd!(do_bucket_ls))?;
+    l.cmd("show", "show detail about a bucket", cmd!(do_bucket_show))?;
+    l.cmd("create", "create a bucket", cmd!(do_bucket_create))?;
 
     sel!(l).run().await
+}
+
+async fn do_bucket_create(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("BUCKET"));
+
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().is_empty() {
+        bad_args!(l, "specify a bucket name to create");
+    }
+
+    let bucket = a.args().get(0).unwrap();
+
+    let res = s
+        .more()
+        .s3()
+        .create_bucket()
+        .object_ownership(
+            aws_sdk_s3::model::ObjectOwnership::BucketOwnerEnforced,
+        )
+        .create_bucket_configuration(
+            aws_sdk_s3::model::CreateBucketConfiguration::builder()
+                .location_constraint(
+                    aws_sdk_s3::model::BucketLocationConstraint::from(
+                        s.more().region_s3().to_string().as_str()
+                    ),
+                )
+                .build(),
+        )
+        .bucket(bucket)
+        .send()
+        .await?;
+
+    println!("{:#?}", res);
+    Ok(())
+}
+
+async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("BUCKET"));
+
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().is_empty() {
+        bad_args!(l, "specify a bucket name to examine");
+    }
+
+    let bucket = a.args().get(0).unwrap();
+
+    match s
+        .more()
+        .s3()
+        .get_public_access_block()
+        .bucket(bucket)
+        .send()
+        .await
+    {
+        Ok(res) => match res.public_access_block_configuration() {
+            Some(v) => {
+                println!("public access block: {:#?}", v);
+            }
+            None => println!("no public access block for bucket?!"),
+        },
+        Err(aws_sdk_ec2::SdkError::ServiceError { err, .. })
+            if err.code() == Some("NoSuchPublicAccessBlockConfiguration") =>
+        {
+            println!("no public access block for bucket");
+        }
+        Err(e) => {
+            return Err(e.into());
+        }
+    };
+
+    match s
+        .more()
+        .s3()
+        .get_bucket_policy()
+        .bucket(bucket)
+        .send()
+        .await
+    {
+        Ok(res) => match res.policy {
+            Some(policy) => {
+                /*
+                 * Pretty-print the policy document as JSON:
+                 */
+                let policy: serde_json::Value = serde_json::from_str(&policy)?;
+                println!("policy: {}", serde_json::to_string_pretty(&policy)?);
+            }
+            None => println!("no policy for bucket?!"),
+        },
+        Err(aws_sdk_ec2::SdkError::ServiceError { err, .. })
+            if err.code() == Some("NoSuchBucketPolicy") =>
+        {
+            println!("no policy for bucket");
+        }
+        Err(e) => {
+            return Err(e.into());
+        }
+    };
+
+    match s
+        .more()
+        .s3()
+        .get_bucket_policy_status()
+        .bucket(bucket)
+        .send()
+        .await
+    {
+        Ok(res) => match res.policy_status() {
+            Some(v) => {
+                println!("policy status: {:#?}", v);
+            }
+            None => println!("no policy status for bucket?!"),
+        },
+        Err(aws_sdk_ec2::SdkError::ServiceError { err, .. })
+            if err.code() == Some("NoSuchBucketPolicy") =>
+        {
+            println!("no policy status for bucket");
+        }
+        Err(e) => {
+            return Err(e.into());
+        }
+    };
+
+    let res = s
+        .more()
+        .s3()
+        .get_bucket_versioning()
+        .bucket(bucket)
+        .send()
+        .await?;
+    println!("versioning: {:#?}", res);
+
+    match s
+        .more()
+        .s3()
+        .get_bucket_ownership_controls()
+        .bucket(bucket)
+        .send()
+        .await
+    {
+        Ok(res) => match res.ownership_controls() {
+            Some(v) => {
+                println!("ownership controls: {:#?}", v);
+            }
+            None => println!("no ownership controls for bucket?!"),
+        },
+        Err(aws_sdk_ec2::SdkError::ServiceError { err, .. })
+            if err.code() == Some("OwnershipControlsNotFoundError") =>
+        {
+            println!("no ownership controls for bucket");
+        }
+        Err(e) => {
+            return Err(e.into());
+        }
+    };
+
+    Ok(())
 }
 
 async fn do_object_ls(mut l: Level<Stuff>) -> Result<()> {
