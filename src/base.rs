@@ -360,6 +360,30 @@ pub async fn get_vol_fuzzy(
     one_ping_only("volume", lookuparg, res.volumes)
 }
 
+pub async fn get_image_fuzzy(
+    s: &Stuff,
+    lookuparg: &str,
+) -> Result<aws_sdk_ec2::model::Image> {
+    let res = s
+        .more()
+        .ec2()
+        .describe_images()
+        .filters(
+            aws_sdk_ec2::model::Filter::builder()
+                .name(if lookuparg.starts_with("ami-") {
+                    "image-id"
+                } else {
+                    "name"
+                })
+                .values(lookuparg)
+                .build(),
+        )
+        .send()
+        .await?;
+
+    one_ping_only("image", lookuparg, res.images)
+}
+
 pub async fn get_vpc_fuzzy(s: &Stuff, lookuparg: &str) -> Result<ec2::Vpc> {
     let filters = Some(if lookuparg.starts_with("vpc-") {
         vec![ec2::Filter {

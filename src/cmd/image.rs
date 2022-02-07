@@ -2,11 +2,23 @@ use crate::prelude::*;
 
 pub async fn do_image(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list images", cmd!(images))?; /* XXX */
+    l.cmd("dump", "dump information about an image", cmd!(image_dump))?;
     l.cmda("destroy", "rm", "destroy an image", cmd!(do_image_rm))?;
     l.cmd(
         "publish",
         "publish a raw file as an AMI",
         cmd!(ami_from_file),
+    )?;
+    l.cmd("copy", "copy an AMI to another region", cmd!(do_image_copy))?;
+    l.cmd(
+        "grant",
+        "add launch permission for an account",
+        cmd!(image_grant),
+    )?;
+    l.cmd(
+        "revoke",
+        "remove launch permission from an account",
+        cmd!(image_revoke),
     )?;
 
     sel!(l).run().await
@@ -41,9 +53,190 @@ async fn do_image_rm(mut l: Level<Stuff>) -> Result<()> {
     Ok(())
 }
 
+async fn image_grant(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("AMI-ID|NAME ACCOUNT"));
+
+    let a = args!(l);
+    let c = l.context().more().ec2();
+
+    if a.args().len() != 2 {
+        bad_args!(l, "specify image ID or name, and the account to allow");
+    }
+
+    let image = get_image_fuzzy(l.context(), a.args()[0].as_str()).await?;
+    eprintln!("image = {}", image.image_id().unwrap());
+
+    let res = c
+        .modify_image_attribute()
+        .image_id(image.image_id().unwrap())
+        .attribute("launchPermission")
+        .launch_permission(
+            aws_sdk_ec2::model::LaunchPermissionModifications::builder()
+                .add(
+                    aws_sdk_ec2::model::LaunchPermission::builder()
+                        .user_id(a.args().get(1).unwrap().as_str())
+                        .build(),
+                )
+                .build(),
+        )
+        .send()
+        .await?;
+
+    println!("{:#?}", res);
+    Ok(())
+}
+
+async fn image_revoke(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("AMI-ID|NAME ACCOUNT"));
+
+    let a = args!(l);
+    let c = l.context().more().ec2();
+
+    if a.args().len() != 2 {
+        bad_args!(l, "specify image ID or name, and the account to disallow");
+    }
+
+    let image = get_image_fuzzy(l.context(), a.args()[0].as_str()).await?;
+    eprintln!("image = {}", image.image_id().unwrap());
+
+    let res = c
+        .modify_image_attribute()
+        .image_id(image.image_id().unwrap())
+        .attribute("launchPermission")
+        .launch_permission(
+            aws_sdk_ec2::model::LaunchPermissionModifications::builder()
+                .remove(
+                    aws_sdk_ec2::model::LaunchPermission::builder()
+                        .user_id(a.args().get(1).unwrap().as_str())
+                        .build(),
+                )
+                .build(),
+        )
+        .send()
+        .await?;
+
+    println!("{:#?}", res);
+    Ok(())
+}
+
+async fn do_image_copy(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("AMI-ID|NAME TARGET_REGION"));
+    l.optflag("W", "no-wait", "do not wait for copy to complete");
+
+    let a = args!(l);
+
+    let wait = !a.opts().opt_present("no-wait");
+
+    if a.args().len() != 2 {
+        bad_args!(l, "specify image ID or name, and the destination region");
+    }
+
+    let image = get_image_fuzzy(l.context(), a.args()[0].as_str()).await?;
+    eprintln!("image = {}", image.image_id().unwrap());
+
+    let target = l
+        .context()
+        .more()
+        .ec2_for_region(a.args()[1].as_str())
+        .await;
+    let res = target
+        .copy_image()
+        .name(image.name().unwrap())
+        .source_image_id(image.image_id().unwrap())
+        .source_region(l.context().more().region_ec2().to_string())
+        .send()
+        .await?;
+
+    let new_image = res.image_id().unwrap();
+
+    if wait {
+        /*
+         * Wait for the image to leave the pending state in the target region.
+         */
+        eprintln!("new image = {}", new_image);
+        eprintln!("waiting for image to be available...");
+        loop {
+            let image = match target
+                .describe_images()
+                .image_ids(new_image)
+                .send()
+                .await
+            {
+                Ok(res) => {
+                    if let Some(mut images) = res.images {
+                        if images.len() != 1 {
+                            bail!(
+                                "could not find image {} on target region",
+                                new_image
+                            );
+                        }
+                        images.pop().unwrap()
+                    } else {
+                        eprintln!("ERROR: images missing from response");
+                        sleep(1000);
+                        continue;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("ERROR: {:?}", e);
+                    sleep(1000);
+                    continue;
+                }
+            };
+
+            match image.state {
+                Some(aws_sdk_ec2::model::ImageState::Available) => {
+                    eprintln!(
+                        "image is now available in {}",
+                        a.args()[1].as_str()
+                    );
+                    break;
+                }
+                Some(aws_sdk_ec2::model::ImageState::Pending) | None => {}
+                Some(other) => {
+                    bail!("unexpected image state = {:?}", other);
+                }
+            }
+
+            sleep(5000);
+            continue;
+        }
+    }
+
+    println!("{}", new_image);
+    Ok(())
+}
+
+async fn image_dump(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("AMI-ID|NAME"));
+
+    let a = args!(l);
+    let c = l.context().more().ec2();
+
+    if a.args().len() != 1 {
+        bad_args!(l, "specify image ID or name");
+    }
+
+    let image = get_image_fuzzy(l.context(), a.args()[0].as_str()).await?;
+    println!("image = {:#?}", image);
+
+    let res = c
+        .describe_image_attribute()
+        .attribute(aws_sdk_ec2::model::ImageAttributeName::LaunchPermission)
+        .image_id(image.image_id().unwrap())
+        .send()
+        .await?;
+    println!(
+        "launch permission = {:#?}",
+        res.launch_permissions.unwrap_or_default()
+    );
+
+    Ok(())
+}
+
 async fn images(mut l: Level<Stuff>) -> Result<()> {
     l.add_column("id", 21, true);
-    l.add_column("name", 24, true);
+    l.add_column("name", 32, true);
     l.add_column("creation", 24, true);
     l.add_column("snapshots", 22, false);
     // XXX l.sort_from_list_desc(Some("creation"))

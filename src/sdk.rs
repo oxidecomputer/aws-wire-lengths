@@ -61,6 +61,18 @@ impl More {
         self.ec2.as_ref().unwrap()
     }
 
+    pub fn region_ec2(&self) -> &Region {
+        &self.region_ec2
+    }
+
+    pub async fn ec2_for_region(&self, region: &str) -> ec2::Client {
+        let cfg = aws_config::from_env()
+            .region(Region::new(region.to_string()))
+            .load()
+            .await;
+        ec2::Client::new(&cfg)
+    }
+
     pub fn s3(&self) -> &s3::Client {
         self.s3.as_ref().unwrap()
     }
