@@ -3,11 +3,17 @@ use crate::prelude::*;
 pub async fn do_route(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list route tables", cmd!(list))?;
     l.cmd("show", "show the contents of a route table", cmd!(show))?;
+    l.cmd("dump", "dump raw detail about a route table", cmd!(dump))?;
     l.cmd("for", "find the route table for a resource", cmd!(find))?;
     l.cmd("create", "create a route table", cmd!(table_create))?;
     l.cmd("destroy", "destroy a route table", cmd!(table_destroy))?;
     l.cmd("add", "add a route", cmd!(route_create))?;
     l.cmd("delete", "remove a route", cmd!(route_delete))?;
+    l.cmd(
+        "associate",
+        "associate a subnet with a route table",
+        cmd!(associate),
+    )?;
 
     sel!(l).run().await
 }
@@ -317,6 +323,22 @@ impl RouteExt for ec2::Route {
     }
 }
 
+async fn dump(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("RTB-ID|NAME"));
+
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 1 {
+        bad_args!(l, "specify the route table to dump");
+    }
+
+    let rtable = get_rt_fuzzy(s, a.args().get(0).unwrap(), true).await?;
+
+    println!("{:#?}", rtable);
+    Ok(())
+}
+
 async fn show(mut l: Level<Stuff>) -> Result<()> {
     l.usage_args(Some("TABLE"));
 
@@ -364,6 +386,103 @@ async fn show(mut l: Level<Stuff>) -> Result<()> {
     }
 
     print!("{}", t.output()?);
+
+    Ok(())
+}
+
+fn find_association(
+    drto: aws_sdk_ec2::output::DescribeRouteTablesOutput,
+    subnet_id: &str,
+) -> Option<String> {
+    if let Some(rtables) = drto.route_tables {
+        for rt in rtables {
+            if let Some(assocs) = rt.associations {
+                for a in assocs {
+                    if a.subnet_id() == Some(subnet_id) {
+                        /*
+                         * XXX Should we check the association state?
+                         */
+                        return Some(
+                            a.route_table_association_id().unwrap().to_string(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+async fn associate(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("RTB-ID|NAME SUBNET-ID|NAME"));
+
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 2 {
+        bad_args!(l, "specify the route table and the subnet");
+    }
+
+    /*
+     * This is the target route table and the subnet we want to attach.
+     */
+    let rtb = get_rt_fuzzy(s, a.args().get(0).unwrap().as_str(), true).await?;
+    let net = get_subnet_fuzzy(s, a.args().get(1).unwrap().as_str()).await?;
+    let id = net.subnet_id().unwrap();
+
+    /*
+     * Because AWS is atrocious, there is no "just associate this subnet with
+     * this route table please" request.  Instead, we must rifle around in our
+     * drawers looking for an existing association and try to replace it, and if
+     * there is not one we need to create a new one.
+     *
+     * Look for an existing association ID for this subnet:
+     */
+    let direct = s
+        .more()
+        .ec2()
+        .describe_route_tables()
+        .filters(
+            aws_sdk_ec2::model::Filter::builder()
+                .name("vpc-id")
+                .values(net.vpc_id().unwrap())
+                .build(),
+        )
+        .filters(
+            aws_sdk_ec2::model::Filter::builder()
+                .name("association.subnet-id")
+                .values(net.subnet_id().unwrap())
+                .build(),
+        )
+        .send()
+        .await?;
+
+    if let Some(assoc) = find_association(direct, id) {
+        eprintln!("found existing association ID {}", assoc);
+
+        let res = s
+            .more()
+            .ec2()
+            .replace_route_table_association()
+            .association_id(assoc)
+            .route_table_id(rtb.route_table_id.unwrap())
+            .send()
+            .await?;
+        println!("{:?}", res);
+    } else {
+        eprintln!("no existing association ID found");
+
+        let res = s
+            .more()
+            .ec2()
+            .associate_route_table()
+            .subnet_id(id)
+            .route_table_id(rtb.route_table_id.unwrap())
+            .send()
+            .await?;
+        println!("{:?}", res);
+    }
 
     Ok(())
 }
