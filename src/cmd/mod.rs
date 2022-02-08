@@ -1,5 +1,6 @@
 pub mod az;
 pub mod config;
+pub mod gateway;
 pub mod image;
 pub mod instance;
 pub mod key;

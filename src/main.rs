@@ -55,6 +55,7 @@ mod prelude {
 mod cmd;
 use cmd::az::do_az;
 use cmd::config::do_config;
+use cmd::gateway::do_gateway;
 use cmd::image::{ami_from_file, do_image};
 use cmd::instance::do_instance;
 use cmd::key::do_key;
@@ -144,6 +145,12 @@ async fn main() -> Result<()> {
     l.cmd("key", "SSH key management", cmd!(do_key))?;
     l.cmd("vpc", "VPC management", cmd!(do_vpc))?;
     l.cmd("subnet", "subnet management", cmd!(do_subnet))?;
+    l.cmda(
+        "gateway",
+        "igw",
+        "Internet gateway management",
+        cmd!(do_gateway),
+    )?;
     l.cmda("route", "rt", "routing table management", cmd!(do_route))?;
     l.cmd(
         "config",

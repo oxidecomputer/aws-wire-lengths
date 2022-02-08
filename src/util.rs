@@ -8,6 +8,7 @@ use std::io::Write;
 pub const WIDTH_PCX: usize = 21;
 pub const WIDTH_VPC: usize = 21;
 pub const WIDTH_AZ: usize = 14;
+pub const WIDTH_IGW: usize = 21;
 
 pub trait RowExt {
     fn add_stror(&mut self, n: &str, v: &Option<String>, def: &str);
