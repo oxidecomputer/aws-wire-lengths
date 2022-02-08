@@ -85,15 +85,22 @@ async fn create_instance(mut l: Level<Stuff>) -> Result<()> {
             }
         }
     };
+    let fetchopt_bool = |n: &str| -> Result<Option<bool>> {
+        Ok(if a.opts().opt_present(n) {
+            Some(true)
+        } else if let Some(v) = fetchopt(n) {
+            Some(match v.as_str() {
+                "true" => true,
+                "false" => false,
+                x => bail!("invalid bool for \"{}\": {:?}", n, x),
+            })
+        } else {
+            None
+        })
+    };
 
     let mut tags = HashMap::new();
     tags.insert("Name".to_string(), fetch("name")?);
-
-    let public_ip = if a.opts().opt_present("p") {
-        Some(true)
-    } else {
-        None
-    };
 
     let io = InstanceOptions {
         ami_id: fetch("image")?,
@@ -104,7 +111,7 @@ async fn create_instance(mut l: Level<Stuff>) -> Result<()> {
         subnet_id: fetch("subnet")?,
         sg_id: fetch("sg")?,
         user_data: fetchopt("userdata"),
-        public_ip,
+        public_ip: fetchopt_bool("public-ip")?,
     };
 
     let id = i_create_instance(l.context(), &io).await?;
