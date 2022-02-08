@@ -384,6 +384,30 @@ pub async fn get_image_fuzzy(
     one_ping_only("image", lookuparg, res.images)
 }
 
+pub async fn get_subnet_fuzzy(
+    s: &Stuff,
+    lookuparg: &str,
+) -> Result<aws_sdk_ec2::model::Subnet> {
+    let res = s
+        .more()
+        .ec2()
+        .describe_subnets()
+        .filters(
+            aws_sdk_ec2::model::Filter::builder()
+                .name(if lookuparg.starts_with("subnet-") {
+                    "subnet-id"
+                } else {
+                    "tag:Name"
+                })
+                .values(lookuparg)
+                .build(),
+        )
+        .send()
+        .await?;
+
+    one_ping_only("subnet", lookuparg, res.subnets)
+}
+
 pub async fn get_vpc_fuzzy(s: &Stuff, lookuparg: &str) -> Result<ec2::Vpc> {
     let filters = Some(if lookuparg.starts_with("vpc-") {
         vec![ec2::Filter {

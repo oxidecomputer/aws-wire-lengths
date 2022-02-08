@@ -3,6 +3,7 @@ use crate::prelude::*;
 pub async fn do_subnet(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list subnets", cmd!(do_subnet_ls))?;
     l.cmd("create", "create a subnet", cmd!(create))?;
+    l.cmd("destroy", "destroy a subnet", cmd!(destroy))?;
 
     sel!(l).run().await
 }
@@ -20,30 +21,57 @@ async fn create(mut l: Level<Stuff>) -> Result<()> {
         bad_args!(l, "specify the name and CIDR block for the subnet");
     }
     let name = a.args().get(0).unwrap().to_string();
-    let cidr_block = a.args().get(0).unwrap().to_string();
+    let cidr_block = a.args().get(1).unwrap().to_string();
 
     let vpc = get_vpc_fuzzy(s, &a.opts().opt_str("vpc").unwrap()).await?;
 
-    let tag_specifications = Some(vec![ec2::TagSpecification {
-        resource_type: ss("subnet"),
-        tags: Some(vec![ec2::Tag {
-            key: ss("Name"),
-            value: Some(name),
-        }]),
-    }]);
-
-    let res = s
+    let res = l
+        .context()
+        .more()
         .ec2()
-        .create_subnet(ec2::CreateSubnetRequest {
-            availability_zone: a.opts().opt_str("az"),
-            cidr_block,
-            tag_specifications,
-            vpc_id: vpc.vpc_id.unwrap(),
-            ..Default::default()
-        })
+        .create_subnet()
+        .vpc_id(vpc.vpc_id.unwrap())
+        .availability_zone(a.opts().opt_str("az").unwrap())
+        .cidr_block(cidr_block)
+        .tag_specifications(
+            aws_sdk_ec2::model::TagSpecification::builder()
+                .resource_type(aws_sdk_ec2::model::ResourceType::Subnet)
+                .tags(
+                    aws_sdk_ec2::model::Tag::builder()
+                        .key("Name")
+                        .value(name)
+                        .build(),
+                )
+                .build(),
+        )
+        .send()
         .await?;
 
     println!("{}", res.subnet.unwrap().subnet_id.unwrap());
+    Ok(())
+}
+
+async fn destroy(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("SUBNET-ID|NAME"));
+
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 1 {
+        bad_args!(l, "specify the name of the subnet to destroy");
+    }
+
+    let subnet = get_subnet_fuzzy(s, a.args().get(0).unwrap().as_str()).await?;
+
+    l
+        .context()
+        .more()
+        .ec2()
+        .delete_subnet()
+        .subnet_id(subnet.subnet_id().unwrap())
+        .send()
+        .await?;
+
     Ok(())
 }
 
