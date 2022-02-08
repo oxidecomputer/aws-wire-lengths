@@ -104,6 +104,17 @@ async fn route_create(mut l: Level<Stuff>) -> Result<()> {
                 nic: inst.nics[0].to_string(),
             }
         }
+        "igw" | "gateway" => {
+            if a.args().len() < 4 {
+                bad_args!(l, "specify Internet gateway name or ID");
+            }
+
+            let igw = get_igw_fuzzy(s, a.args().get(3).unwrap()).await?;
+
+            Target::Internet {
+                id: igw.internet_gateway_id().unwrap().to_string(),
+            }
+        }
         x => bail!("cannot make routes for {:?} targets yet", x),
     };
 
@@ -245,6 +256,12 @@ impl Target {
                 destination_cidr_block,
                 instance_id: Some(id.to_string()),
                 //network_interface_id: Some(nic.to_string()),
+                ..Default::default()
+            }),
+            Target::Internet { id } => Ok(ec2::CreateRouteRequest {
+                route_table_id,
+                destination_cidr_block,
+                gateway_id: Some(id.to_string()),
                 ..Default::default()
             }),
             other => bail!("cannot yet make a route for {:?}", other),

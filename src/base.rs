@@ -408,6 +408,30 @@ pub async fn get_subnet_fuzzy(
     one_ping_only("subnet", lookuparg, res.subnets)
 }
 
+pub async fn get_igw_fuzzy(
+    s: &Stuff,
+    lookuparg: &str,
+) -> Result<aws_sdk_ec2::model::InternetGateway> {
+    let res = s
+        .more()
+        .ec2()
+        .describe_internet_gateways()
+        .filters(
+            aws_sdk_ec2::model::Filter::builder()
+                .name(if lookuparg.starts_with("igw-") {
+                    "internet-gateway-id"
+                } else {
+                    "tag:Name"
+                })
+                .values(lookuparg)
+                .build(),
+        )
+        .send()
+        .await?;
+
+    one_ping_only("Internet gateway", lookuparg, res.internet_gateways)
+}
+
 pub async fn get_vpc_fuzzy(s: &Stuff, lookuparg: &str) -> Result<ec2::Vpc> {
     let filters = Some(if lookuparg.starts_with("vpc-") {
         vec![ec2::Filter {
