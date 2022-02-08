@@ -408,6 +408,30 @@ pub async fn get_subnet_fuzzy(
     one_ping_only("subnet", lookuparg, res.subnets)
 }
 
+pub async fn get_nat_fuzzy(
+    s: &Stuff,
+    lookuparg: &str,
+) -> Result<aws_sdk_ec2::model::NatGateway> {
+    let res = s
+        .more()
+        .ec2()
+        .describe_nat_gateways()
+        .filter(
+            aws_sdk_ec2::model::Filter::builder()
+                .name(if lookuparg.starts_with("igw-") {
+                    "nat-gateway-id"
+                } else {
+                    "tag:Name"
+                })
+                .values(lookuparg)
+                .build(),
+        )
+        .send()
+        .await?;
+
+    one_ping_only("NAT gateway", lookuparg, res.nat_gateways)
+}
+
 pub async fn get_igw_fuzzy(
     s: &Stuff,
     lookuparg: &str,

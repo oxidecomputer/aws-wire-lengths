@@ -110,7 +110,7 @@ async fn route_create(mut l: Level<Stuff>) -> Result<()> {
                 nic: inst.nics[0].to_string(),
             }
         }
-        "igw" | "gateway" => {
+        "internet" | "igw" | "gateway" => {
             if a.args().len() < 4 {
                 bad_args!(l, "specify Internet gateway name or ID");
             }
@@ -119,6 +119,17 @@ async fn route_create(mut l: Level<Stuff>) -> Result<()> {
 
             Target::Internet {
                 id: igw.internet_gateway_id().unwrap().to_string(),
+            }
+        }
+        "nat" => {
+            if a.args().len() < 4 {
+                bad_args!(l, "specify NAT gateway name or ID");
+            }
+
+            let nat = get_nat_fuzzy(s, a.args().get(3).unwrap()).await?;
+
+            Target::Nat {
+                id: nat.nat_gateway_id().unwrap().to_string(),
             }
         }
         x => bail!("cannot make routes for {:?} targets yet", x),
@@ -268,6 +279,12 @@ impl Target {
                 route_table_id,
                 destination_cidr_block,
                 gateway_id: Some(id.to_string()),
+                ..Default::default()
+            }),
+            Target::Nat { id } => Ok(ec2::CreateRouteRequest {
+                route_table_id,
+                destination_cidr_block,
+                nat_gateway_id: Some(id.to_string()),
                 ..Default::default()
             }),
             other => bail!("cannot yet make a route for {:?}", other),

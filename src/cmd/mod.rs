@@ -5,6 +5,7 @@ pub mod gateway;
 pub mod image;
 pub mod instance;
 pub mod key;
+pub mod nat;
 pub mod role;
 pub mod route;
 pub mod s3;

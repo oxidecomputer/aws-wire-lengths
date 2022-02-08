@@ -60,6 +60,7 @@ use cmd::image::{ami_from_file, do_image};
 use cmd::instance::do_instance;
 use cmd::ip::do_ip;
 use cmd::key::do_key;
+use cmd::nat::do_nat;
 use cmd::role::do_role;
 use cmd::route::do_route;
 use cmd::s3::do_s3;
@@ -152,6 +153,7 @@ async fn main() -> Result<()> {
         "Internet gateway management",
         cmd!(do_gateway),
     )?;
+    l.cmd("nat", "managed NAT gateway management", cmd!(do_nat))?;
     l.cmda("route", "rt", "routing table management", cmd!(do_route))?;
     l.cmd("ip", "elastic IP address management", cmd!(do_ip))?;
     l.cmd(
