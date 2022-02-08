@@ -2,6 +2,11 @@ use crate::prelude::*;
 
 pub async fn do_config(mut l: Level<Stuff>) -> Result<()> {
     l.cmd("serial", "manage serial console access", cmd!(do_serial))?;
+    l.cmd(
+        "rename",
+        "change the Name tag on a resource",
+        cmd!(do_rename),
+    )?;
 
     sel!(l).run().await
 }
@@ -89,6 +94,32 @@ async fn do_serial_get(mut l: Level<Stuff>) -> Result<()> {
     } else {
         println!("disabled");
     }
+
+    Ok(())
+}
+
+async fn do_rename(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("ID NEW_NAME"));
+
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 2 {
+        bad_args!(l, "specify resource ID and new name");
+    }
+
+    s.more()
+        .ec2()
+        .create_tags()
+        .resources(a.args().get(0).unwrap())
+        .tags(
+            aws_sdk_ec2::model::Tag::builder()
+                .key("Name")
+                .value(a.args().get(1).unwrap())
+                .build(),
+        )
+        .send()
+        .await?;
 
     Ok(())
 }
