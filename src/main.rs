@@ -58,6 +58,7 @@ use cmd::config::do_config;
 use cmd::gateway::do_gateway;
 use cmd::image::{ami_from_file, do_image};
 use cmd::instance::do_instance;
+use cmd::ip::do_ip;
 use cmd::key::do_key;
 use cmd::role::do_role;
 use cmd::route::do_route;
@@ -152,6 +153,7 @@ async fn main() -> Result<()> {
         cmd!(do_gateway),
     )?;
     l.cmda("route", "rt", "routing table management", cmd!(do_route))?;
+    l.cmd("ip", "elastic IP address management", cmd!(do_ip))?;
     l.cmd(
         "config",
         "manage account- or region-level configuration",
