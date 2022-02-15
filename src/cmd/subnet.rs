@@ -92,26 +92,16 @@ async fn do_subnet_ls(mut l: Level<Stuff>) -> Result<()> {
     let filters = filter_vpc_fuzzy(s, a.opts().opt_str("vpc")).await?;
 
     let res = s
+        .more()
         .ec2()
-        .describe_subnets(ec2::DescribeSubnetsRequest {
-            filters,
-            ..Default::default()
-        })
+        .describe_subnets()
+        .set_filters(filters)
+        .send()
         .await?;
 
     let x = Vec::new();
     for sn in res.subnets.as_ref().unwrap_or(&x) {
-        /*
-         * Find the name tag value:
-         */
-        let nametag = if let Some(tags) = sn.tags.as_ref() {
-            tags.iter()
-                .find(|t| t.key.as_deref() == Some("Name"))
-                .and_then(|t| t.value.as_deref())
-                .map(|s| s.to_string())
-        } else {
-            None
-        };
+        let nametag = sn.tags.tag("Name");
 
         let flags = [
             sn.map_public_ip_on_launch.as_flag("P"),

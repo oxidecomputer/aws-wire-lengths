@@ -33,24 +33,26 @@ async fn table_create(mut l: Level<Stuff>) -> Result<()> {
 
     let vpc = get_vpc_fuzzy(s, &a.opts().opt_str("vpc").unwrap()).await?;
 
-    let tag_specifications = Some(vec![ec2::TagSpecification {
-        resource_type: ss("route-table"),
-        tags: Some(vec![ec2::Tag {
-            key: ss("Name"),
-            value: Some(name),
-        }]),
-    }]);
-
     let res = s
+        .more()
         .ec2()
-        .create_route_table(ec2::CreateRouteTableRequest {
-            tag_specifications,
-            vpc_id: vpc.vpc_id.unwrap(),
-            ..Default::default()
-        })
+        .create_route_table()
+        .tag_specifications(
+            aws_sdk_ec2::model::TagSpecification::builder()
+                .resource_type(aws_sdk_ec2::model::ResourceType::RouteTable)
+                .tags(
+                    aws_sdk_ec2::model::Tag::builder()
+                        .key("Name")
+                        .value(&name)
+                        .build(),
+                )
+                .build(),
+        )
+        .vpc_id(vpc.vpc_id().unwrap())
+        .send()
         .await?;
 
-    println!("{}", res.route_table.unwrap().route_table_id.unwrap());
+    println!("{}", res.route_table().unwrap().route_table_id().unwrap());
     Ok(())
 }
 
@@ -67,11 +69,11 @@ async fn table_destroy(mut l: Level<Stuff>) -> Result<()> {
 
     let rt = get_rt_fuzzy(s, &name, true).await?;
 
-    s.ec2()
-        .delete_route_table(ec2::DeleteRouteTableRequest {
-            route_table_id: rt.route_table_id.unwrap().to_string(),
-            ..Default::default()
-        })
+    s.more()
+        .ec2()
+        .delete_route_table()
+        .route_table_id(rt.route_table_id().unwrap())
+        .send()
         .await?;
 
     Ok(())
@@ -135,14 +137,17 @@ async fn route_create(mut l: Level<Stuff>) -> Result<()> {
         x => bail!("cannot make routes for {:?} targets yet", x),
     };
 
-    let res =
-        s.ec2()
-            .create_route(target.to_create(
-                &cidr,
-                rt.route_table_id.as_ref().unwrap().as_str(),
-            )?)
-            .await?;
-    assert!(res.return_.unwrap());
+    let res = s
+        .more()
+        .ec2()
+        .create_route()
+        .destination_cidr_block(cidr)
+        .route_table_id(rt.route_table_id().unwrap())
+        .from_target(&target)?
+        .send()
+        .await?;
+
+    assert!(res.r#return.unwrap());
 
     Ok(())
 }
@@ -159,12 +164,12 @@ async fn route_delete(mut l: Level<Stuff>) -> Result<()> {
 
     let rt = get_rt_fuzzy(s, a.args().get(0).unwrap(), true).await?;
 
-    s.ec2()
-        .delete_route(ec2::DeleteRouteRequest {
-            route_table_id: rt.route_table_id.unwrap(),
-            destination_cidr_block: Some(a.args().get(1).unwrap().to_string()),
-            ..Default::default()
-        })
+    s.more()
+        .ec2()
+        .delete_route()
+        .route_table_id(rt.route_table_id().unwrap())
+        .destination_cidr_block(a.args().get(1).unwrap())
+        .send()
         .await?;
 
     Ok(())
@@ -198,14 +203,14 @@ async fn list(mut l: Level<Stuff>) -> Result<()> {
     let filters = filter_vpc_fuzzy(s, a.opts().opt_str("vpc")).await?;
 
     let res = s
+        .more()
         .ec2()
-        .describe_route_tables(ec2::DescribeRouteTablesRequest {
-            filters,
-            ..Default::default()
-        })
+        .describe_route_tables()
+        .set_filters(filters)
+        .send()
         .await?;
 
-    for rt in res.route_tables.unwrap_or_default().iter() {
+    for rt in res.route_tables().unwrap_or_default().iter() {
         let n = rt.tags.tag("Name");
 
         let mut r = Row::default();
@@ -258,35 +263,24 @@ impl Target {
             Target::Peering { id } => id.to_string(),
         }
     }
+}
 
-    fn to_create(
-        &self,
-        cidr: &str,
-        rtb: &str,
-    ) -> Result<ec2::CreateRouteRequest> {
-        let route_table_id = rtb.to_string();
-        let destination_cidr_block = Some(cidr.to_string());
+trait CreateRouteExt {
+    fn from_target(
+        self,
+        t: &Target,
+    ) -> Result<aws_sdk_ec2::client::fluent_builders::CreateRoute>;
+}
 
-        match self {
-            Target::Instance { id, .. } => Ok(ec2::CreateRouteRequest {
-                route_table_id,
-                destination_cidr_block,
-                instance_id: Some(id.to_string()),
-                //network_interface_id: Some(nic.to_string()),
-                ..Default::default()
-            }),
-            Target::Internet { id } => Ok(ec2::CreateRouteRequest {
-                route_table_id,
-                destination_cidr_block,
-                gateway_id: Some(id.to_string()),
-                ..Default::default()
-            }),
-            Target::Nat { id } => Ok(ec2::CreateRouteRequest {
-                route_table_id,
-                destination_cidr_block,
-                nat_gateway_id: Some(id.to_string()),
-                ..Default::default()
-            }),
+impl CreateRouteExt for aws_sdk_ec2::client::fluent_builders::CreateRoute {
+    fn from_target(
+        self,
+        t: &Target,
+    ) -> Result<aws_sdk_ec2::client::fluent_builders::CreateRoute> {
+        match t {
+            Target::Instance { id, .. } => Ok(self.instance_id(id)),
+            Target::Internet { id } => Ok(self.gateway_id(id)),
+            Target::Nat { id } => Ok(self.nat_gateway_id(id)),
             other => bail!("cannot yet make a route for {:?}", other),
         }
     }
@@ -296,7 +290,7 @@ trait RouteExt {
     fn target(&self) -> Result<Target>;
 }
 
-impl RouteExt for ec2::Route {
+impl RouteExt for aws_sdk_ec2::model::Route {
     fn target(&self) -> Result<Target> {
         if let Some(iid) = &self.instance_id {
             if let Some(nid) = &self.network_interface_id {
@@ -381,9 +375,12 @@ async fn show(mut l: Level<Stuff>) -> Result<()> {
     for rt in routes.iter() {
         let target = rt.target()?;
 
-        let active = rt.state.as_deref().unwrap_or_default() == "active";
-        let blackhole = rt.state.as_deref().unwrap_or_default() == "blackhole";
-        let flags = [active.as_flag("A"), blackhole.as_flag("B")].join("");
+        use aws_sdk_ec2::model::RouteState;
+        let flags = [
+            matches!(&rt.state, Some(RouteState::Active)).as_flag("A"),
+            matches!(&rt.state, Some(RouteState::Blackhole)).as_flag("B"),
+        ]
+        .join("");
 
         let mut r = Row::default();
 
@@ -394,7 +391,11 @@ async fn show(mut l: Level<Stuff>) -> Result<()> {
             continue;
         }
 
-        r.add_stror("state", &rt.state, "?");
+        r.add_stror(
+            "state",
+            &rt.state.as_ref().map(|s| s.as_str().to_string()),
+            "?",
+        );
         r.add_str("target", &target.info());
         r.add_str("type", target.type_column());
         r.add_str("flags", &flags);

@@ -354,11 +354,11 @@ async fn do_sg_ls(mut l: Level<Stuff>) -> Result<()> {
     let filters = filter_vpc_fuzzy(s, a.opts().opt_str("vpc")).await?;
 
     let res = s
+        .more()
         .ec2()
-        .describe_security_groups(ec2::DescribeSecurityGroupsRequest {
-            filters,
-            ..Default::default()
-        })
+        .describe_security_groups()
+        .set_filters(filters)
+        .send()
         .await?;
 
     let x = Vec::new();

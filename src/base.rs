@@ -443,25 +443,25 @@ pub async fn get_igw_fuzzy(
     one_ping_only("Internet gateway", lookuparg, res.internet_gateways)
 }
 
-pub async fn get_vpc_fuzzy(s: &Stuff, lookuparg: &str) -> Result<ec2::Vpc> {
-    let filters = Some(if lookuparg.starts_with("vpc-") {
-        vec![ec2::Filter {
-            name: ss("vpc-id"),
-            values: Some(vec![lookuparg.into()]),
-        }]
-    } else {
-        vec![ec2::Filter {
-            name: ss("tag:Name"),
-            values: Some(vec![lookuparg.into()]),
-        }]
-    });
-
+pub async fn get_vpc_fuzzy(
+    s: &Stuff,
+    lookuparg: &str,
+) -> Result<aws_sdk_ec2::model::Vpc> {
     let res = s
+        .more()
         .ec2()
-        .describe_vpcs(ec2::DescribeVpcsRequest {
-            filters,
-            ..Default::default()
-        })
+        .describe_vpcs()
+        .filters(
+            aws_sdk_ec2::model::Filter::builder()
+                .name(if lookuparg.starts_with("vpc-") {
+                    "vpc-id"
+                } else {
+                    "tag:Name"
+                })
+                .values(lookuparg)
+                .build(),
+        )
+        .send()
         .await?;
 
     one_ping_only("VPC", lookuparg, res.vpcs)
@@ -498,25 +498,25 @@ pub async fn get_rt_fuzzy(
     s: &Stuff,
     lookuparg: &str,
     direct_only: bool,
-) -> Result<ec2::RouteTable> {
+) -> Result<aws_sdk_ec2::model::RouteTable> {
     let filters = Some(if lookuparg.starts_with("rtb-") {
-        vec![ec2::Filter {
-            name: ss("route-table-id"),
-            values: Some(vec![lookuparg.into()]),
-        }]
+        vec![aws_sdk_ec2::model::Filter::builder()
+            .name("route-table-id")
+            .values(lookuparg)
+            .build()]
     } else if !direct_only && lookuparg.starts_with("vpc-") {
         /*
          * Get the default route table for this VPC.
          */
         vec![
-            ec2::Filter {
-                name: ss("vpc-id"),
-                values: Some(vec![lookuparg.into()]),
-            },
-            ec2::Filter {
-                name: ss("association.main"),
-                values: Some(vec!["true".to_string()]),
-            },
+            aws_sdk_ec2::model::Filter::builder()
+                .name("vpc-id")
+                .values(lookuparg)
+                .build(),
+            aws_sdk_ec2::model::Filter::builder()
+                .name("association.main")
+                .values("true")
+                .build(),
         ]
     } else if !direct_only && lookuparg.starts_with("subnet-") {
         /*
@@ -524,23 +524,23 @@ pub async fn get_rt_fuzzy(
          * there is not, the default route table for the VPC applies, but for
          * now we are not looking for that here.
          */
-        vec![ec2::Filter {
-            name: ss("association.subnet-id"),
-            values: Some(vec![lookuparg.into()]),
-        }]
+        vec![aws_sdk_ec2::model::Filter::builder()
+            .name("association.subnet-id")
+            .values(lookuparg)
+            .build()]
     } else {
-        vec![ec2::Filter {
-            name: ss("tag:Name"),
-            values: Some(vec![lookuparg.into()]),
-        }]
+        vec![aws_sdk_ec2::model::Filter::builder()
+            .name("tag:Name")
+            .values(lookuparg)
+            .build()]
     });
 
     let res = s
+        .more()
         .ec2()
-        .describe_route_tables(ec2::DescribeRouteTablesRequest {
-            filters,
-            ..Default::default()
-        })
+        .describe_route_tables()
+        .set_filters(filters)
+        .send()
         .await?;
 
     one_ping_only("route table", lookuparg, res.route_tables)
@@ -549,13 +549,13 @@ pub async fn get_rt_fuzzy(
 pub async fn filter_vpc_fuzzy(
     s: &Stuff,
     optarg: Option<String>,
-) -> Result<Option<Vec<ec2::Filter>>> {
+) -> Result<Option<Vec<aws_sdk_ec2::model::Filter>>> {
     if let Some(optarg) = optarg.as_deref() {
         let vpc = get_vpc_fuzzy(s, optarg).await?;
-        Ok(Some(vec![ec2::Filter {
-            name: ss("vpc-id"),
-            values: Some(vec![vpc.vpc_id.unwrap()]),
-        }]))
+        Ok(Some(vec![aws_sdk_ec2::model::Filter::builder()
+            .name("vpc-id")
+            .values(vpc.vpc_id.unwrap())
+            .build()]))
     } else {
         Ok(None)
     }
