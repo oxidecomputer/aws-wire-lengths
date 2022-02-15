@@ -1,8 +1,10 @@
+use futures::StreamExt;
+
 use crate::prelude::*;
 
 async fn do_bucket_ls(mut l: Level<Stuff>) -> Result<()> {
     l.add_column("name", 48, true);
-    l.add_column("creation", 24, true);
+    l.add_column("creation", WIDTH_UTC, true);
 
     let a = no_args!(l);
     let mut t = a.table();
@@ -14,11 +16,7 @@ async fn do_bucket_ls(mut l: Level<Stuff>) -> Result<()> {
         let mut r = Row::default();
 
         r.add_stror("name", &b.name, "?");
-        r.add_stror(
-            "creation",
-            &b.creation_date.map(|cd| format!("{:?}", cd)),
-            "-",
-        );
+        r.add_stror("creation", &b.creation_date.as_utc(), "-");
 
         t.add_row(r);
     }
@@ -59,7 +57,7 @@ async fn do_bucket_create(mut l: Level<Stuff>) -> Result<()> {
             aws_sdk_s3::model::CreateBucketConfiguration::builder()
                 .location_constraint(
                     aws_sdk_s3::model::BucketLocationConstraint::from(
-                        s.more().region_s3().to_string().as_str()
+                        s.more().region_s3().to_string().as_str(),
                     ),
                 )
                 .build(),
@@ -211,42 +209,35 @@ async fn do_object_ls(mut l: Level<Stuff>) -> Result<()> {
         bad_args!(l, "too many arguments");
     }
 
-    let bucket = a.args()[0].clone();
+    let bucket = a.args().get(0).cloned().unwrap();
     let prefix = a.args().get(1).cloned();
-    let mut nct = None;
 
-    loop {
-        let res = s
-            .s3()
-            .list_objects_v2(s3::ListObjectsV2Request {
-                bucket: bucket.clone(),
-                continuation_token: nct.clone(),
-                prefix: prefix.clone(),
-                ..Default::default()
-            })
-            .await?;
+    let mut list = s
+        .more()
+        .s3()
+        .list_objects_v2()
+        .bucket(bucket)
+        .set_prefix(prefix)
+        .into_paginator()
+        .page_size(1000)
+        .send();
 
-        if let Some(c) = &res.contents {
-            for o in c.iter() {
-                let key = o.key.as_deref().ok_or_else(|| anyhow!("no key?"))?;
-                let size = o.size.unwrap_or(0);
-                let mtime = o.last_modified.as_deref().unwrap_or("-");
-                let etag = o.e_tag.as_deref().unwrap_or("-");
+    while let Some(res) = list.next().await.transpose()? {
+        for o in res.contents().unwrap_or_default() {
+            let key = o.key().ok_or_else(|| anyhow!("no key?"))?;
+            let size = o.size();
+            let mtime = o.last_modified.as_utc();
+            let mtime = mtime.as_deref().unwrap_or("-");
+            let etag = o.e_tag().unwrap_or("-");
 
-                if a.opts().opt_present("L") {
-                    println!("{} {} {} {}", size, mtime, etag, key);
-                }
-                if a.opts().opt_present("l") {
-                    println!("{} {} {}", size, mtime, key);
-                } else {
-                    println!("{}", key);
-                }
+            if a.opts().opt_present("L") {
+                println!("{} {} {} {}", size, mtime, etag, key);
             }
-        }
-
-        nct = res.next_continuation_token;
-        if nct.is_none() {
-            break;
+            if a.opts().opt_present("l") {
+                println!("{} {} {}", size, mtime, key);
+            } else {
+                println!("{}", key);
+            }
         }
     }
 
@@ -267,12 +258,12 @@ async fn do_object_info(mut l: Level<Stuff>) -> Result<()> {
     let key = a.args()[1].clone();
 
     let res = s
+        .more()
         .s3()
-        .get_object_acl(s3::GetObjectAclRequest {
-            bucket,
-            key,
-            ..Default::default()
-        })
+        .get_object_acl()
+        .bucket(bucket)
+        .key(key)
+        .send()
         .await?;
 
     println!("res = {:#?}", res);
@@ -292,33 +283,24 @@ async fn do_object_get(mut l: Level<Stuff>) -> Result<()> {
     let bucket = a.args()[0].clone();
     let key = a.args()[1].clone();
 
-    let res = s
+    let mut res = s
+        .more()
         .s3()
-        .get_object(s3::GetObjectRequest {
-            bucket,
-            key,
-            ..Default::default()
-        })
+        .get_object()
+        .bucket(bucket)
+        .key(key)
+        .send()
         .await?;
 
-    if let Some(body) = res.body {
-        let mut r = body.into_async_read();
-        let mut buf = BytesMut::with_capacity(64 * 1024);
-        let out = std::io::stdout();
-        let mut out = out.lock();
+    let out = std::io::stdout();
+    let mut out = out.lock();
 
-        loop {
-            buf.clear();
-            let sz = r.read_buf(&mut buf).await?;
-            if sz == 0 {
-                return Ok(());
-            }
-
-            out.write_all(&buf)?;
-        }
-    } else {
-        bail!("no body?");
+    while let Some(chunk) = res.body.next().await.transpose()? {
+        out.write_all(&chunk)?;
     }
+    out.flush()?;
+
+    Ok(())
 }
 
 async fn do_object_rm(mut l: Level<Stuff>) -> Result<()> {
@@ -334,12 +316,12 @@ async fn do_object_rm(mut l: Level<Stuff>) -> Result<()> {
     let bucket = a.args()[0].clone();
     let key = a.args()[1].clone();
 
-    s.s3()
-        .delete_object(s3::DeleteObjectRequest {
-            bucket,
-            key,
-            ..Default::default()
-        })
+    s.more()
+        .s3()
+        .delete_object()
+        .bucket(bucket)
+        .key(key)
+        .send()
         .await?;
 
     Ok(())
@@ -396,9 +378,10 @@ async fn do_object_put(mut l: Level<Stuff>) -> Result<()> {
     let (content_length, body) = if let Some(known_size) = known_size {
         let input = tokio::io::stdin();
         let stree = tokio_util::io::ReaderStream::new(input);
+        let body = hyper::Body::wrap_stream(stree);
         (
-            Some(known_size as i64),
-            Some(rusoto_core::ByteStream::new(stree)),
+            known_size.try_into().unwrap(),
+            aws_sdk_s3::ByteStream::new(body.into()),
         )
     } else {
         /*
@@ -408,14 +391,14 @@ async fn do_object_put(mut l: Level<Stuff>) -> Result<()> {
     };
 
     let res = s
+        .more()
         .s3()
-        .put_object(s3::PutObjectRequest {
-            bucket,
-            key,
-            body,
-            content_length,
-            ..Default::default() //content_md5: (),
-        })
+        .put_object()
+        .bucket(bucket)
+        .key(key)
+        .body(body)
+        .content_length(content_length)
+        .send()
         .await?;
 
     println!("res = {:?}", res);
