@@ -75,11 +75,11 @@ async fn do_peering_rm(mut l: Level<Stuff>) -> Result<()> {
         bad_args!(l, "specify peering connection");
     }
 
-    s.ec2()
-        .delete_vpc_peering_connection(ec2::DeleteVpcPeeringConnectionRequest {
-            vpc_peering_connection_id: a.args().get(0).unwrap().to_string(),
-            ..Default::default()
-        })
+    s.more()
+        .ec2()
+        .delete_vpc_peering_connection()
+        .vpc_peering_connection_id(a.args().get(0).unwrap())
+        .send()
         .await?;
 
     Ok(())
@@ -96,29 +96,23 @@ async fn do_peering_ls(mut l: Level<Stuff>) -> Result<()> {
     let s = l.context();
 
     let res = s
+        .more()
         .ec2()
-        .describe_vpc_peering_connections(
-            ec2::DescribeVpcPeeringConnectionsRequest {
-                ..Default::default()
-            },
-        )
+        .describe_vpc_peering_connections()
+        .send()
         .await?;
 
-    for pc in res.vpc_peering_connections.unwrap_or_default() {
+    for pc in res.vpc_peering_connections().unwrap_or_default() {
         let mut r = Row::default();
 
         r.add_stror("id", &pc.vpc_peering_connection_id, "?");
+        r.add_stror("accepter", &pc.accepter_vpc_info().unwrap().vpc_id, "-");
+        r.add_stror("requester", &pc.requester_vpc_info().unwrap().vpc_id, "-");
         r.add_stror(
-            "accepter",
-            &pc.accepter_vpc_info.as_ref().unwrap().vpc_id,
+            "status",
+            &pc.status().unwrap().code().map(|v| v.as_str().to_string()),
             "-",
         );
-        r.add_stror(
-            "requester",
-            &pc.requester_vpc_info.as_ref().unwrap().vpc_id,
-            "-",
-        );
-        r.add_stror("status", &pc.status.unwrap().code, "-");
 
         t.add_row(r);
     }
