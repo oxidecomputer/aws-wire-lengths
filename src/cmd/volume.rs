@@ -10,7 +10,7 @@ pub async fn do_volume(mut l: Level<Stuff>) -> Result<()> {
 }
 
 async fn volumes(mut l: Level<Stuff>) -> Result<()> {
-    l.add_column("creation", 24, false);
+    l.add_column("creation", WIDTH_UTC, false);
     l.add_column("id", 21, true);
     l.add_column("state", 10, true);
     l.add_column("natt", 4, true); /* Number of attachments */
@@ -24,28 +24,22 @@ async fn volumes(mut l: Level<Stuff>) -> Result<()> {
     let mut t = a.table();
     let s = l.context();
 
-    let res = s
-        .ec2()
-        .describe_volumes(ec2::DescribeVolumesRequest {
-            ..Default::default()
-        })
-        .await?;
+    let res = s.more().ec2().describe_volumes().send().await?;
 
-    let x = Vec::new();
-    for v in res.volumes.as_ref().unwrap_or(&x) {
+    for v in res.volumes().unwrap_or_default() {
         let mut r = Row::default();
 
         /*
          * The magic INFO column contains information we were able to glean by
          * looking further afield.
          */
-        let atts = v.attachments.as_ref().unwrap();
+        let atts = v.attachments().unwrap();
         let info = if atts.len() != 1 {
             v.tags.tag("Name").as_deref().unwrap_or("-").to_string()
         } else {
             let a = atts.iter().next().unwrap();
 
-            if let Some(aid) = a.instance_id.as_deref() {
+            if let Some(aid) = a.instance_id() {
                 let ai = get_instance(s, InstanceLookup::ById(aid.to_string()))
                     .await?;
 
@@ -61,11 +55,11 @@ async fn volumes(mut l: Level<Stuff>) -> Result<()> {
 
         r.add_stror("id", &v.volume_id, "?");
         r.add_str("info", &info);
-        r.add_stror("state", &v.state, "-");
+        r.add_stror("state", &v.state().map(|v| v.as_str().to_string()), "-");
         r.add_u64("size", v.size.unwrap_or(0) as u64);
         r.add_stror("snapshot", &v.snapshot_id, "-");
         r.add_stror("name", &v.tags.tag("Name"), "-");
-        r.add_stror("creation", &v.create_time, "-");
+        r.add_stror("creation", &v.create_time.as_utc(), "-");
         r.add_stror("az", &v.availability_zone, "-");
         r.add_u64("natt", atts.len() as u64);
 

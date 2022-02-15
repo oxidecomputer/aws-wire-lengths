@@ -1,4 +1,5 @@
 use anyhow::{bail, Result};
+use chrono::prelude::*;
 use hiercmd::prelude::*;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
@@ -11,6 +12,21 @@ pub const WIDTH_AZ: usize = 14;
 pub const WIDTH_IGW: usize = 21;
 pub const WIDTH_NAT: usize = 21;
 pub const WIDTH_EIP: usize = 26;
+
+pub const WIDTH_UTC: usize = 20;
+
+pub trait DateTimeOptExt {
+    fn as_utc(&self) -> Option<String>;
+}
+
+impl DateTimeOptExt for Option<aws_smithy_types::DateTime> {
+    fn as_utc(&self) -> Option<String> {
+        self.map(|v| {
+            Utc.timestamp_nanos(v.as_nanos().try_into().unwrap())
+                .to_rfc3339_opts(SecondsFormat::Secs, true)
+        })
+    }
+}
 
 pub trait RowExt {
     fn add_stror(&mut self, n: &str, v: &Option<String>, def: &str);
