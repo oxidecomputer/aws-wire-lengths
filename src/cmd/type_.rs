@@ -1,4 +1,6 @@
 use crate::prelude::*;
+use aws_sdk_ec2::model::Filter;
+use futures::StreamExt;
 
 pub async fn do_type(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list instance types", cmd!(do_type_ls))?;
@@ -25,115 +27,119 @@ async fn do_type_ls(mut l: Level<Stuff>) -> Result<()> {
 
     let mut filters = Vec::new();
     if a.opts().opt_present("X") {
-        filters.push(ec2::Filter {
-            name: Some("processor-info.supported-architecture".into()),
-            values: Some(vec!["x86_64".into()]),
-        });
+        filters.push(
+            Filter::builder()
+                .name("processor-info.supported-architecture")
+                .values("x86_64")
+                .build(),
+        );
     }
     if a.opts().opt_present("A") {
-        filters.push(ec2::Filter {
-            name: Some("processor-info.supported-architecture".into()),
-            values: Some(vec!["arm64".into()]),
-        });
+        filters.push(
+            Filter::builder()
+                .name("processor-info.supported-architecture")
+                .values("arm64")
+                .build(),
+        );
     }
     if a.opts().opt_present("C") {
-        filters.push(ec2::Filter {
-            name: Some("current-generation".into()),
-            values: Some(vec!["true".into()]),
-        });
+        filters.push(
+            Filter::builder()
+                .name("current-generation")
+                .values("true")
+                .build(),
+        );
     }
     if let Some(name) = a.opts().opt_str("n") {
-        filters.push(ec2::Filter {
-            name: Some("instance-type".into()),
-            values: Some(vec![name]),
-        });
+        filters
+            .push(Filter::builder().name("instance-type").values(name).build());
     }
 
-    let mut types = Vec::new();
-    let mut tok = None;
-    loop {
-        let res = s
-            .ec2()
-            .describe_instance_types(ec2::DescribeInstanceTypesRequest {
-                filters: Some(filters.clone()),
-                next_token: tok,
-                ..Default::default()
-            })
-            .await?;
+    let mut list = s
+        .more()
+        .ec2()
+        .describe_instance_types()
+        .set_filters(Some(filters.clone()))
+        .into_paginator()
+        .page_size(100)
+        .send();
 
-        if let Some(it) = res.instance_types {
-            types.extend(it);
-        }
+    while let Some(res) = list.next().await.transpose()? {
+        for typ in res.instance_types().unwrap_or_default() {
+            let mut r = Row::default();
 
-        if let Some(ntok) = res.next_token {
-            tok = Some(ntok);
-        } else {
-            break;
-        }
-    }
-
-    for typ in types {
-        let mut r = Row::default();
-
-        let arch = if let Some(pi) = &typ.processor_info {
-            if let Some(arch) = &pi.supported_architectures {
-                if arch.len() != 1 {
-                    if arch.contains(&"i386".to_string())
-                        && arch.contains(&"x86_64".to_string())
-                    {
-                        Some("x86".to_string())
-                    } else {
-                        bail!("weird instance type? {:?}", arch);
-                    }
-                } else if arch[0] == "x86_64_mac" {
-                    Some("x86_mac".to_string())
-                } else if arch[0] == "arm64" {
-                    Some("arm".to_string())
-                } else if arch[0] == "x86_64" {
-                    Some("x86".to_string())
-                } else if arch[0] == "i386" {
-                    bail!("386 only? {:?}", typ.instance_type);
+            let arch = if let Some(pi) = typ.processor_info() {
+                if let Some(arch) = pi.supported_architectures() {
+                    use aws_sdk_ec2::model::ArchitectureType::*;
+                    Some(
+                        if arch.len() != 1 {
+                            if arch.contains(&I386) && arch.contains(&X8664) {
+                                "x86"
+                            } else {
+                                bail!("weird instance type? {:?}", arch);
+                            }
+                        } else {
+                            match arch.get(0).unwrap() {
+                                X8664 => "x86",
+                                X8664Mac => "x86_mac",
+                                Arm64 => "arm",
+                                I386 => {
+                                    bail!("386 only? {:?}", typ.instance_type())
+                                }
+                                other => {
+                                    bail!("what is {:?}", other);
+                                }
+                            }
+                        }
+                        .to_string(),
+                    )
                 } else {
-                    Some(arch[0].to_string())
+                    None
                 }
             } else {
                 None
-            }
-        } else {
-            None
-        };
+            };
 
-        let memory_bytes = typ
-            .memory_info
-            .map(|mi| mi.size_in_mi_b)
-            .flatten()
-            .map(|megs| (megs as u64) * 1024 * 1024)
-            .unwrap_or(0);
+            let memory_bytes = typ
+                .memory_info()
+                .map(|mi| mi.size_in_mi_b())
+                .flatten()
+                .map(|megs| (megs as u64) * 1024 * 1024)
+                .unwrap_or(0);
 
-        let vcpu = typ
-            .v_cpu_info
-            .as_ref()
-            .map(|ci| ci.default_v_cpus)
-            .flatten()
-            .map(|nvcpus| nvcpus as u64)
-            .unwrap_or(0);
+            let vcpu = typ
+                .v_cpu_info()
+                .map(|ci| ci.default_v_cpus())
+                .flatten()
+                .map(|nvcpus| nvcpus as u64)
+                .unwrap_or(0);
 
-        let ena = typ
-            .network_info
-            .map(|ni| ni.ena_support)
-            .flatten()
-            .map(|ena| ena == "supported" || ena == "required");
+            let ena =
+                typ.network_info().map(|ni| ni.ena_support()).flatten().map(
+                    |ena| {
+                        matches!(
+                            ena,
+                            aws_sdk_ec2::model::EnaSupport::Required
+                                | aws_sdk_ec2::model::EnaSupport::Supported
+                        )
+                    },
+                );
 
-        let flags =
-            [typ.current_generation.as_flag("C"), ena.as_flag("E")].join("");
+            let flags = [typ.current_generation.as_flag("C"), ena.as_flag("E")]
+                .join("");
 
-        r.add_stror("name", &typ.instance_type, "?");
-        r.add_stror("arch", &arch, "-");
-        r.add_bytes("ram", memory_bytes);
-        r.add_u64("vcpu", vcpu);
-        r.add_str("flags", &flags);
+            r.add_stror(
+                "name",
+                &typ.instance_type().map(|v| v.as_str().to_string()),
+                "?",
+            );
+            r.add_stror("arch", &arch, "-");
+            r.add_bytes("ram", memory_bytes);
+            r.add_u64("vcpu", vcpu);
+            r.add_str("flags", &flags);
 
-        t.add_row(r);
+            t.add_row(r);
+        }
     }
 
     print!("{}", t.output()?);
