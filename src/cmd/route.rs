@@ -143,7 +143,7 @@ async fn route_create(mut l: Level<Stuff>) -> Result<()> {
         .create_route()
         .destination_cidr_block(cidr)
         .route_table_id(rt.route_table_id().unwrap())
-        .from_target(&target)?
+        .to_target(&target)?
         .send()
         .await?;
 
@@ -266,14 +266,14 @@ impl Target {
 }
 
 trait CreateRouteExt {
-    fn from_target(
+    fn to_target(
         self,
         t: &Target,
     ) -> Result<aws_sdk_ec2::client::fluent_builders::CreateRoute>;
 }
 
 impl CreateRouteExt for aws_sdk_ec2::client::fluent_builders::CreateRoute {
-    fn from_target(
+    fn to_target(
         self,
         t: &Target,
     ) -> Result<aws_sdk_ec2::client::fluent_builders::CreateRoute> {

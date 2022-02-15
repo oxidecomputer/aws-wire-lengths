@@ -668,7 +668,7 @@ pub async fn i_upload_snapshot(
             .snapshot_id(&id)
             .block_index(nblocks)
             .block_data(buf.into())
-            .data_length(CHUNKSZ.try_into().unwrap())
+            .data_length(CHUNKSZ)
             .checksum_algorithm(
                 aws_sdk_ebs::model::ChecksumAlgorithm::ChecksumAlgorithmSha256,
             )

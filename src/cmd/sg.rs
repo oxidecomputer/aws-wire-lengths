@@ -309,7 +309,7 @@ impl TheirRuleExt for aws_sdk_ec2::model::SecurityGroupRule {
                 bail!("conflicting target for {:?}", self);
             }
             if let Some(gr) = refgr.group_id() {
-                if gr == self.group_id().as_deref().unwrap() {
+                if gr == self.group_id().unwrap() {
                     Ok(RuleTarget::ThisGroup)
                 } else {
                     Ok(RuleTarget::OtherGroup(gr.to_string()))
@@ -429,7 +429,7 @@ async fn destroy(mut l: Level<Stuff>) -> Result<()> {
         bad_args!(l, "specify the security group name to delete");
     }
 
-    let sg = get_sg_fuzzy(s, &a.args().get(0).unwrap()).await?;
+    let sg = get_sg_fuzzy(s, a.args().get(0).unwrap()).await?;
 
     s.more()
         .ec2()
@@ -453,7 +453,7 @@ async fn apply(mut l: Level<Stuff>) -> Result<()> {
         bad_args!(l, "specify the security group name");
     }
 
-    let sg = get_sg_fuzzy(s, &a.args().get(0).unwrap()).await?;
+    let sg = get_sg_fuzzy(s, a.args().get(0).unwrap()).await?;
     let id = sg.group_id.as_deref().unwrap().to_string();
 
     /*
@@ -463,9 +463,7 @@ async fn apply(mut l: Level<Stuff>) -> Result<()> {
         let mut f = std::fs::File::open(a.opts().opt_str("file").unwrap())?;
         let mut s = String::new();
         f.read_to_string(&mut s)?;
-        s.lines()
-            .map(|l| Rule::try_from(l))
-            .collect::<Result<Vec<_>>>()?
+        s.lines().map(Rule::try_from).collect::<Result<Vec<_>>>()?
     };
 
     /*
