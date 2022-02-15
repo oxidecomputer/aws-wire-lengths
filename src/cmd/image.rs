@@ -9,6 +9,7 @@ pub async fn do_image(mut l: Level<Stuff>) -> Result<()> {
         "publish a raw file as an AMI",
         cmd!(ami_from_file),
     )?;
+    l.cmd("register", "register a snapshot as an AMI", cmd!(register))?;
     l.cmd("copy", "copy an AMI to another region", cmd!(do_image_copy))?;
     l.cmd(
         "grant",
@@ -289,6 +290,25 @@ async fn images(mut l: Level<Stuff>) -> Result<()> {
     }
 
     print!("{}", t.output()?);
+
+    Ok(())
+}
+
+pub async fn register(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("NAME SNAP-ID"));
+    l.optflag("E", "ena", "enable ENA support");
+
+    let a = args!(l);
+
+    if a.args().len() != 2 {
+        bad_args!(l, "specify image name and snapshot ID");
+    }
+
+    let name = a.args().get(0).cloned().unwrap();
+    let snap = a.args().get(1).cloned().unwrap();
+
+    i_register_image(l.context(), &name, &snap, a.opts().opt_present("E"))
+        .await?;
 
     Ok(())
 }
