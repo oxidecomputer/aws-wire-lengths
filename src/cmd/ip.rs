@@ -15,12 +15,7 @@ async fn list(mut l: Level<Stuff>) -> Result<()> {
     let s = l.context();
     let mut t = a.table();
 
-    let res = s
-        .more()
-        .ec2()
-        .describe_addresses()
-        .send()
-        .await?;
+    let res = s.more().ec2().describe_addresses().send().await?;
 
     for addr in res.addresses().unwrap_or_default().iter() {
         let n = addr.tags.tag("Name");

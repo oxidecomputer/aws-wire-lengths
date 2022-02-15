@@ -165,7 +165,8 @@ async fn destroy(mut l: Level<Stuff>) -> Result<()> {
 
     let igw = get_igw_fuzzy(s, &name).await?;
 
-    s.more().ec2()
+    s.more()
+        .ec2()
         .delete_internet_gateway()
         .internet_gateway_id(igw.internet_gateway_id().unwrap())
         .send()

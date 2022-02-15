@@ -1,9 +1,9 @@
 pub mod az;
-pub mod ip;
 pub mod config;
 pub mod gateway;
 pub mod image;
 pub mod instance;
+pub mod ip;
 pub mod key;
 pub mod nat;
 pub mod role;

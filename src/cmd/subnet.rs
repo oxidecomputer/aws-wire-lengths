@@ -63,8 +63,7 @@ async fn destroy(mut l: Level<Stuff>) -> Result<()> {
 
     let subnet = get_subnet_fuzzy(s, a.args().get(0).unwrap().as_str()).await?;
 
-    l
-        .context()
+    l.context()
         .more()
         .ec2()
         .delete_subnet()
