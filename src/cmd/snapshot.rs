@@ -38,11 +38,12 @@ async fn do_snapshot_rm(mut l: Level<Stuff>) -> Result<()> {
 
     for id in a.args() {
         l.context()
+            .more()
             .ec2()
-            .delete_snapshot(ec2::DeleteSnapshotRequest {
-                dry_run: Some(dry_run),
-                snapshot_id: id.to_string(),
-            })
+            .delete_snapshot()
+            .dry_run(dry_run)
+            .snapshot_id(id)
+            .send()
             .await?;
         if dry_run {
             println!("would delete {}", id);
@@ -56,11 +57,12 @@ async fn do_snapshot_rm(mut l: Level<Stuff>) -> Result<()> {
 
 async fn snapshots(mut l: Level<Stuff>) -> Result<()> {
     l.add_column("id", 22, true);
-    l.add_column("start", 24, true);
+    l.add_column("start", WIDTH_UTC, true);
     l.add_column("size", 5, true);
     l.add_column("state", 10, true);
     l.add_column("desc", 30, true);
     l.add_column("volume", 22, false);
+    l.add_column("name", 32, false);
     // XXX l.sort_from_list_desc(Some("start"))
 
     let a = args!(l);
@@ -74,12 +76,12 @@ async fn snapshots(mut l: Level<Stuff>) -> Result<()> {
     };
 
     let res = s
+        .more()
         .ec2()
-        .describe_snapshots(ec2::DescribeSnapshotsRequest {
-            owner_ids: Some(vec!["self".to_string()]),
-            snapshot_ids,
-            ..Default::default()
-        })
+        .describe_snapshots()
+        .owner_ids("self")
+        .set_snapshot_ids(snapshot_ids)
+        .send()
         .await?;
 
     let x = Vec::new();
@@ -87,11 +89,16 @@ async fn snapshots(mut l: Level<Stuff>) -> Result<()> {
         let mut r = Row::default();
 
         r.add_stror("id", &s.snapshot_id, "?");
-        r.add_stror("start", &s.start_time, "-");
-        r.add_stror("state", &s.state, "-");
+        r.add_stror("start", &s.start_time.as_utc(), "-");
+        r.add_stror(
+            "state",
+            &s.state.as_ref().map(|s| s.as_str().to_string()),
+            "-",
+        );
         r.add_u64("size", s.volume_size.unwrap_or(0) as u64);
         r.add_stror("volume", &s.volume_id, "-");
         r.add_stror("desc", &s.description, "-");
+        r.add_stror("name", &s.tags.tag("Name"), "-");
 
         t.add_row(r);
     }
