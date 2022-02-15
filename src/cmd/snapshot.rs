@@ -3,8 +3,26 @@ use crate::prelude::*;
 pub async fn do_snapshot(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list snapshots", cmd!(snapshots))?; /* XXX */
     l.cmda("destroy", "rm", "destroy a snapshot", cmd!(do_snapshot_rm))?;
+    l.cmd("upload", "upload a snapshot", cmd!(do_snapshot_upload))?;
 
     sel!(l).run().await
+}
+
+async fn do_snapshot_upload(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("NAME FILE"));
+
+    let a = args!(l);
+
+    if a.args().len() != 2 {
+        bad_args!(l, "specify snapshot name and local file path");
+    }
+
+    let name = a.args().get(0).cloned().unwrap();
+    let file = a.args().get(1).cloned().unwrap();
+
+    i_upload_snapshot(l.context(), &name, &file).await?;
+
+    Ok(())
 }
 
 async fn do_snapshot_rm(mut l: Level<Stuff>) -> Result<()> {
