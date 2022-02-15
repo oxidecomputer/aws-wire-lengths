@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use aws_sdk_ebs as ebs;
 use aws_sdk_ec2 as ec2;
 use aws_sdk_s3 as s3;
 use aws_types::region::Region;
@@ -6,6 +7,7 @@ use aws_types::region::Region;
 pub struct More {
     region_ec2: Region,
     ec2: Option<ec2::Client>,
+    ebs: Option<ebs::Client>,
     region_s3: Region,
     s3: Option<s3::Client>,
 }
@@ -39,6 +41,7 @@ impl More {
             region_ec2,
             region_s3,
             ec2: None,
+            ebs: None,
             s3: None,
         };
 
@@ -47,6 +50,12 @@ impl More {
             .load()
             .await;
         m.ec2 = Some(ec2::Client::new(&cfg));
+
+        let cfg = aws_config::from_env()
+            .region(m.region_ec2.clone())
+            .load()
+            .await;
+        m.ebs = Some(ebs::Client::new(&cfg));
 
         let cfg = aws_config::from_env()
             .region(m.region_s3.clone())
@@ -59,6 +68,10 @@ impl More {
 
     pub fn ec2(&self) -> &ec2::Client {
         self.ec2.as_ref().unwrap()
+    }
+
+    pub fn ebs(&self) -> &ebs::Client {
+        self.ebs.as_ref().unwrap()
     }
 
     pub fn region_ec2(&self) -> &Region {

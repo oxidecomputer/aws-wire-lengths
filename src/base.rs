@@ -1,26 +1,13 @@
 use std::fs::File;
 use std::io::{Read, Write};
-use std::time::Duration;
 
-use anyhow::{anyhow, bail, Result};
-use bytes::BytesMut;
-use rusoto_core::param::Params;
-use rusoto_core::Region;
+use anyhow::{bail, Result};
 use rusoto_ec2 as ec2;
-use rusoto_s3 as s3;
-use xml::writer::{EmitterConfig, EventWriter, XmlEvent};
+use sha2::Digest;
 
 use ec2::{
-    BlockDeviceMapping, CreateSnapshotRequest, DeleteVolumeRequest,
-    DescribeConversionTasksRequest, DescribeImagesRequest,
-    DescribeSnapshotsRequest, DiskImageDetail, EbsBlockDevice,
-    ImportVolumeRequest, RegisterImageRequest, Tag, VolumeDetail,
-};
-use s3::util::PreSignedRequest;
-use s3::{
-    CompleteMultipartUploadRequest, CompletedMultipartUpload, CompletedPart,
-    CreateMultipartUploadRequest, DeleteObjectRequest, GetObjectRequest,
-    HeadObjectRequest, PutObjectRequest, UploadPartRequest, S3,
+    BlockDeviceMapping, DeleteVolumeRequest, DescribeImagesRequest,
+    DescribeSnapshotsRequest, EbsBlockDevice, RegisterImageRequest, Tag,
 };
 
 use crate::util::*;
@@ -574,236 +561,169 @@ pub async fn filter_vpc_fuzzy(
     }
 }
 
-pub async fn i_import_volume(
+/**
+ * Use the EBS direct access API to upload a local raw disk image file as a new
+ * EBS snapshot.  Returns the snapshot ID.
+ */
+pub async fn i_upload_snapshot(
     s: &Stuff,
-    bkt: &str,
-    kimage: &str,
-    kmanifest: &str,
+    name: &str,
+    file: &str,
 ) -> Result<String> {
-    let sz = image_size(s.s3(), bkt, kimage).await?;
-    println!("  IMAGE SIZE: {:?}", sz);
+    let mut f = File::open(file)?;
 
     /*
-     * Upload raw:
+     * Determine the size of the input file.  We need to round this up to the
+     * next whole number of gigabytes for EBS.
      */
-    let mut out = Vec::new();
-    let mut w: EventWriter<&mut Vec<u8>> = EmitterConfig::new()
-        .perform_indent(true)
-        .create_writer(&mut out);
+    let byte_sz = f.metadata()?.len();
+    let gb_sz = (byte_sz + (1 << 30) - 1) / (1 << 30);
 
-    w.write(XmlEvent::start_element("manifest"))?;
-
-    w.simple_tag("version", "2010-11-15")?;
-    w.simple_tag("file-format", "RAW")?;
-
-    w.write(XmlEvent::start_element("importer"))?;
-    w.simple_tag("name", "oxide-aws-import")?;
-    w.simple_tag("version", "1.0.0")?;
-    w.simple_tag("release", "2020-08-06")?;
-    w.write(XmlEvent::end_element())?;
-
-    w.simple_tag(
-        "self-destruct-url",
-        &sign_delete(s.credprov(), s.region_s3(), bkt, kmanifest).await?,
-    )?;
-
-    w.write(XmlEvent::start_element("import"))?;
-
-    w.simple_tag("size", &sz.bytes())?;
-    w.simple_tag("volume-size", &sz.gb())?;
-    w.write(XmlEvent::start_element("parts").attr("count", "1"))?;
-
-    w.write(XmlEvent::start_element("part").attr("index", "0"))?;
-    w.write(
-        XmlEvent::start_element("byte-range")
-            .attr("start", "0")
-            .attr("end", &sz.end()),
-    )?;
-    w.write(XmlEvent::end_element())?; /* byte-range */
-    w.simple_tag("key", kimage)?;
-    w.simple_tag(
-        "head-url",
-        &sign_head(s.credprov(), s.region_s3(), bkt, kimage).await?,
-    )?;
-    w.simple_tag(
-        "get-url",
-        &sign_get(s.credprov(), s.region_s3(), bkt, kimage).await?,
-    )?;
-    w.simple_tag(
-        "delete-url",
-        &sign_delete(s.credprov(), s.region_s3(), bkt, kimage).await?,
-    )?;
-    w.write(XmlEvent::end_element())?; /* part */
-
-    w.write(XmlEvent::end_element())?; /* parts */
-    w.write(XmlEvent::end_element())?; /* import */
-    w.write(XmlEvent::end_element())?; /* manifest */
-
-    out.write_all(b"\n")?;
-
-    println!("{}", String::from_utf8(out.clone())?);
-
-    println!("uploading -> {}", kmanifest);
-
-    let req = PutObjectRequest {
-        bucket: bkt.to_string(),
-        key: kmanifest.to_string(),
-        body: Some(out.into()),
-        ..Default::default()
-    };
-    s.s3().put_object(req).await?;
-
-    println!("ok!");
-
-    println!("importing volume...");
-
-    let availability_zone = s.region_ec2().name().to_string() + "a";
-    let import_manifest_url =
-        sign_get(s.credprov(), s.region_s3(), bkt, kmanifest).await?;
     let res = s
-        .ec2()
-        .import_volume(ImportVolumeRequest {
-            availability_zone,
-            dry_run: Some(false),
-            image: DiskImageDetail {
-                format: "RAW".to_string(),
-                import_manifest_url,
-                bytes: sz.bytes,
-            },
-            volume: VolumeDetail { size: sz.gb },
-            description: None,
-        })
+        .more()
+        .ebs()
+        .start_snapshot()
+        .volume_size(gb_sz.try_into().unwrap())
+        .tags(
+            aws_sdk_ebs::model::Tag::builder()
+                .key("Name")
+                .value(name)
+                .build(),
+        )
+        .set_timeout(Some(10))
+        .send()
         .await?;
 
-    println!("res: {:#?}", res);
-
-    let ct = if let Some(ct) = &res.conversion_task {
-        ct
+    let id = if let Some(id) = res.snapshot_id() {
+        println!("snapshot id: {}", id);
+        id.to_string()
     } else {
-        bail!("No conversion task?!");
+        bail!("no snapshot ID?");
     };
 
-    let ctid = ct.conversion_task_id.as_deref().unwrap();
-    println!("CONVERSION TASK ID: {}", ctid);
+    const CHUNKSZ: i32 = 512 * 1024;
 
-    /*
-     * Wait for success!
-     */
-    println!("waiting for conversion task...");
+    let mut nblocks = 0;
+    let expected_blocks = (byte_sz as i32) / CHUNKSZ;
+    loop {
+        /*
+         * EBS apparently operates in chunks of exactly 512KB, at least through
+         * this API.
+         */
+        let mut buf = vec![0u8; CHUNKSZ.try_into().unwrap()];
 
-    let mut volid = None;
+        let mut off = 0usize;
+        let mut eof = false;
+        loop {
+            let rem = buf.len().checked_sub(off).unwrap();
+            if rem == 0 {
+                break;
+            }
 
-    let cts = loop {
-        let dct = DescribeConversionTasksRequest {
-            conversion_task_ids: Some(vec![ctid.to_string()]),
-            ..Default::default()
-        };
-
-        let res = s.ec2().describe_conversion_tasks(dct).await?;
-
-        let mut v = res.conversion_tasks.ok_or_else(|| anyhow!("no ct"))?;
-
-        if v.len() != 1 {
-            println!("got {} tasks?!", v.len());
-            sleep(5_000);
-            continue;
-        }
-
-        let ct = &v[0];
-
-        if volid.is_none() {
-            if let Some(ivtd) = &ct.import_volume {
-                if let Some(vol) = &ivtd.volume {
-                    if let Some(id) = &vol.id {
-                        if !id.trim().is_empty() {
-                            println!("INFO: volume ID is {}", id);
-                            volid = Some(id.to_string());
-                        }
-                    }
+            match f.read(&mut buf[off..off + rem]) {
+                Ok(0) => {
+                    /*
+                     * We have reached the end of the file, and need to extend
+                     * the buffer out with zeroes so that it is a multiple of
+                     * the chunk size.
+                     */
+                    buf[off..off + rem].fill(0);
+                    eof = true;
+                    break;
+                }
+                Ok(sz) => {
+                    off = off.checked_add(sz).unwrap();
+                }
+                Err(e) => {
+                    bail!("reading from file: {:?}", e);
                 }
             }
         }
 
-        let mut msg = ctid.to_string() + ": ";
-        msg += ct.state.as_deref().unwrap_or("<unknown state>");
-        if let Some(status_message) = &ct.status_message {
-            msg += ": ";
-            msg += status_message;
+        {
+            let mut out = std::io::stdout();
+            write!(
+                out,
+                "\ruploading block {:>7} of {:>7}  {:>3}%    ",
+                nblocks + 1,
+                expected_blocks,
+                100 * nblocks / expected_blocks,
+            )?;
+            out.flush()?;
         }
 
-        if let Some(state) = &ct.state {
-            if state != "active" && state != "pending" {
-                println!("state is now \"{}\"; exiting loop", state);
-                assert_eq!(v.len(), 1);
-                break v.pop();
-            }
+        /*
+         * Calculate the SHA256 checksum for this chunk.
+         */
+        let mut digest = sha2::Sha256::new();
+        digest.update(&buf);
+        let sum = base64::encode(digest.finalize());
+
+        /*
+         * Upload the chunk!
+         */
+        s.more()
+            .ebs()
+            .put_snapshot_block()
+            .snapshot_id(&id)
+            .block_index(nblocks)
+            .block_data(buf.into())
+            .data_length(CHUNKSZ.try_into().unwrap())
+            .checksum_algorithm(
+                aws_sdk_ebs::model::ChecksumAlgorithm::ChecksumAlgorithmSha256,
+            )
+            .checksum(sum)
+            .send()
+            .await?;
+        nblocks += 1;
+
+        if eof {
+            break;
         }
-
-        println!("waiting: {}", msg);
-
-        sleep(5_000);
-    };
-
-    if volid.is_none() {
-        bail!("completed, but no volume ID?! {:#?}", cts);
     }
+    println!();
 
-    Ok(volid.unwrap())
-}
-
-pub async fn i_create_snapshot(s: &Stuff, volid: &str) -> Result<String> {
+    /*
+     * Finalise the snapshot.
+     */
     let res = s
-        .ec2()
-        .create_snapshot(CreateSnapshotRequest {
-            volume_id: volid.to_string(),
-            ..Default::default()
-        })
+        .more()
+        .ebs()
+        .complete_snapshot()
+        .snapshot_id(&id)
+        .changed_blocks_count(nblocks)
+        .send()
         .await?;
+    println!("complete = {:#?}", res);
 
-    println!("res: {:#?}", res);
-
-    let snapid = res.snapshot_id.unwrap();
-    println!("SNAPSHOT ID: {}", snapid);
-
+    /*
+     * Wait for a terminal state.
+     */
+    println!("waiting for snapshot to be ready...");
     loop {
         let res = s
+            .more()
             .ec2()
-            .describe_snapshots(DescribeSnapshotsRequest {
-                snapshot_ids: Some(vec![snapid.clone()]),
-                ..Default::default()
-            })
+            .describe_snapshots()
+            .snapshot_ids(&id)
+            .send()
             .await?;
 
-        let snapshots = res.snapshots.as_ref().unwrap();
+        if let Some(snap) = res.snapshots().unwrap_or_default().first() {
+            use aws_sdk_ec2::model::SnapshotState as St;
 
-        if snapshots.len() != 1 {
-            println!("got {} snapshots?!", snapshots.len());
-            sleep(5_000);
+            match snap.state() {
+                Some(St::Completed) => return Ok(id),
+                Some(St::Error) => bail!("snapshot now in error state"),
+                Some(St::Pending) | None => (),
+                x => eprintln!("WARNING: weird snapshot state? {:?}", x),
+            }
+
+            sleep(1000);
             continue;
         }
-        let snap = &snapshots[0];
 
-        let state = snap.state.as_deref().unwrap().to_string();
-
-        let mut msg = snapid.to_string() + ": " + &state;
-        if let Some(extra) = &snap.state_message {
-            msg += ": ";
-            msg += extra;
-        }
-        if let Some(extra) = &snap.progress {
-            msg += ": progress ";
-            msg += extra;
-        }
-
-        // println!("snapshot state: {:#?}", snap);
-
-        if &state == "completed" {
-            return Ok(snapid);
-        }
-
-        println!("waiting: {}", msg);
-
-        sleep(5_000);
+        bail!("could not find snapshot");
     }
 }
 
@@ -907,187 +827,4 @@ pub async fn i_volume_rm(s: &Stuff, volid: &str, dry_run: bool) -> Result<()> {
         })
         .await?;
     Ok(())
-}
-
-#[derive(Debug)]
-struct ImageSizes {
-    bytes: i64,
-    gb: i64,
-}
-
-impl ImageSizes {
-    fn bytes(&self) -> String {
-        self.bytes.to_string()
-    }
-
-    fn end(&self) -> String {
-        (self.bytes - 1).to_string()
-    }
-
-    fn gb(&self) -> String {
-        self.gb.to_string()
-    }
-}
-
-async fn image_size(s3: &dyn S3, b: &str, k: &str) -> Result<ImageSizes> {
-    /*
-     * Get size of uploaded object.
-     */
-    let ikh = s3
-        .head_object(HeadObjectRequest {
-            bucket: b.to_string(),
-            key: k.to_string(),
-            ..Default::default()
-        })
-        .await?;
-
-    /*
-     * We need the size in bytes, as well as the size in GiB rounded up to the
-     * next GiB (so that the created volume is large enough to contain the
-     * image.
-     */
-    let bytes = ikh.content_length.unwrap();
-    let gb = (bytes + (1 << 30) - 1) / (1 << 30);
-
-    Ok(ImageSizes { bytes, gb })
-}
-
-pub async fn i_put_object(
-    s: &Stuff,
-    bucket: &str,
-    object: &str,
-    file: &str,
-) -> Result<()> {
-    let mut f = File::open(&file)?;
-
-    let res = s
-        .s3()
-        .create_multipart_upload(CreateMultipartUploadRequest {
-            bucket: bucket.to_string(),
-            key: object.to_string(),
-            ..Default::default()
-        })
-        .await?;
-    let upload_id = res.upload_id.as_deref().unwrap();
-
-    println!("upload ID {} ...", upload_id);
-
-    let mut total_size = 0;
-    let mut parts = Vec::new();
-    loop {
-        let mut buf = BytesMut::with_capacity(5 * 1024 * 1024);
-        buf.resize(5 * 1024 * 1024, 0);
-        let sz = f.read(&mut buf)?;
-        if sz == 0 {
-            break;
-        }
-
-        let part_number = (parts.len() + 1) as i64;
-        println!("part {} size {}", part_number, sz);
-        total_size += sz;
-
-        /*
-         * This was most tedious to work out:
-         */
-        let froz = buf.split_to(sz).freeze();
-        let se = futures::stream::once(async { Ok(froz) });
-        let body = Some(rusoto_s3::StreamingBody::new(se));
-
-        let res = s
-            .s3()
-            .upload_part(UploadPartRequest {
-                body,
-                content_length: Some(sz as i64),
-                upload_id: upload_id.to_string(),
-                key: object.to_string(),
-                bucket: bucket.to_string(),
-                part_number,
-                ..Default::default()
-            })
-            .await?;
-
-        let etag = res.e_tag.expect("etag");
-        println!("    part {} etag {}", part_number, etag);
-        parts.push(CompletedPart {
-            part_number: Some(part_number),
-            e_tag: Some(etag),
-        });
-    }
-
-    println!("uploaded {} chunks, total size {}", parts.len(), total_size);
-
-    s.s3()
-        .complete_multipart_upload(CompleteMultipartUploadRequest {
-            bucket: bucket.to_string(),
-            key: object.to_string(),
-            upload_id: upload_id.to_string(),
-            multipart_upload: Some(CompletedMultipartUpload {
-                parts: Some(parts),
-            }),
-            ..Default::default()
-        })
-        .await?;
-
-    println!("upload ok!");
-    Ok(())
-}
-
-pub async fn sign_delete(
-    c: &dyn rusoto_credential::ProvideAwsCredentials,
-    r: &Region,
-    b: &str,
-    k: &str,
-) -> Result<String> {
-    let creds = c.credentials().await?;
-    Ok(DeleteObjectRequest {
-        bucket: b.to_string(),
-        key: k.to_string(),
-        ..Default::default()
-    }
-    .get_presigned_url(
-        r,
-        &creds,
-        &s3::util::PreSignedRequestOption {
-            expires_in: Duration::from_secs(3600),
-        },
-    ))
-}
-
-pub async fn sign_head(
-    c: &dyn rusoto_credential::ProvideAwsCredentials,
-    r: &Region,
-    b: &str,
-    k: &str,
-) -> Result<String> {
-    let creds = c.credentials().await?;
-    let uri = format!("/{}/{}", b, k);
-    let mut req =
-        rusoto_core::signature::SignedRequest::new("HEAD", "s3", r, &uri);
-    let params = Params::new();
-
-    let expires_in = Duration::from_secs(3600);
-
-    req.set_params(params);
-    Ok(req.generate_presigned_url(&creds, &expires_in, false))
-}
-
-pub async fn sign_get(
-    c: &dyn rusoto_credential::ProvideAwsCredentials,
-    r: &Region,
-    b: &str,
-    k: &str,
-) -> Result<String> {
-    let creds = c.credentials().await?;
-    Ok(GetObjectRequest {
-        bucket: b.to_string(),
-        key: k.to_string(),
-        ..Default::default()
-    }
-    .get_presigned_url(
-        r,
-        &creds,
-        &s3::util::PreSignedRequestOption {
-            expires_in: Duration::from_secs(300),
-        },
-    ))
 }

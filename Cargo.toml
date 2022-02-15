@@ -2,7 +2,7 @@
 name = "aws-wire-lengths"
 version = "0.1.0"
 authors = ["Joshua M. Clulow <josh@sysmgr.org>"]
-edition = "2018"
+edition = "2021"
 license = "MPL-2.0"
 
 [features]
@@ -12,7 +12,6 @@ vendored-openssl = ['openssl/vendored']
 [dependencies]
 rusoto_core = "0.47"
 rusoto_ec2 = "0.47"
-rusoto_s3 = "0.47"
 rusoto_sts = "0.47"
 rusoto_credential = "0.47"
 rusoto_ec2_instance_connect = "0.47"
@@ -20,8 +19,6 @@ tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde-xml-rs = "0.4"
-xml-rs = "0.8"
 bytes = "1"
 futures = "0.3"
 tokio-util = { version = "0.6", features = [ "io", "codec" ] }
@@ -42,3 +39,8 @@ aws-config = "0.6.0"
 aws-types = "0.6.0"
 aws-sdk-ec2 = "0.6.0"
 aws-sdk-s3 = "0.6.0"
+aws-smithy-types = "0.36.0"
+chrono = "0.4.19"
+hyper = "0.14.16"
+aws-sdk-ebs = "0.6.0"
+sha2 = "0.10.1"

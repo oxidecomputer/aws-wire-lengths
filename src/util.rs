@@ -4,7 +4,6 @@ use hiercmd::prelude::*;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use rusoto_ec2::Tag;
-use std::io::Write;
 
 pub const WIDTH_PCX: usize = 21;
 pub const WIDTH_VPC: usize = 21;
@@ -103,6 +102,7 @@ pub fn ss(s: &str) -> Option<String> {
     Some(s.to_string())
 }
 
+#[allow(dead_code)]
 pub fn genkey(len: usize) -> String {
     thread_rng()
         .sample_iter(&Alphanumeric)
@@ -131,17 +131,4 @@ pub fn one_ping_only<T>(
 
 pub fn sleep(ms: u64) {
     std::thread::sleep(std::time::Duration::from_millis(ms));
-}
-
-pub trait EventWriterExt {
-    fn simple_tag(&mut self, n: &str, v: &str) -> Result<()>;
-}
-
-impl<T: Write> EventWriterExt for xml::EventWriter<T> {
-    fn simple_tag(&mut self, n: &str, v: &str) -> Result<()> {
-        self.write(xml::writer::XmlEvent::start_element(n))?;
-        self.write(xml::writer::XmlEvent::characters(v))?;
-        self.write(xml::writer::XmlEvent::end_element())?;
-        Ok(())
-    }
 }

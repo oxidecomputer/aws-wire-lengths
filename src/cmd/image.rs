@@ -294,8 +294,15 @@ async fn images(mut l: Level<Stuff>) -> Result<()> {
 }
 
 pub async fn ami_from_file(mut l: Level<Stuff>) -> Result<()> {
-    l.reqopt("b", "bucket", "S3 bucket", "BUCKET");
-    l.optopt("p", "prefix", "S3 prefix", "PREFIX");
+    /*
+     * Ignore these options silently for now.  They were necessary when we were
+     * using the old ImportVolume API, where the data must first be uploaded to
+     * S3.  Now that we use the EBS direct API, an S3 bucket is no longer
+     * required.
+     */
+    l.optopt("b", "bucket", "S3 bucket (ignored)", "BUCKET");
+    l.optopt("p", "prefix", "S3 prefix (ignored)", "PREFIX");
+
     l.reqopt("n", "name", "target image name", "NAME");
     l.optflag("E", "ena", "enable ENA support");
     l.reqopt("f", "file", "local file to upload", "FILENAME");
@@ -303,41 +310,12 @@ pub async fn ami_from_file(mut l: Level<Stuff>) -> Result<()> {
     let a = no_args!(l);
 
     let name = a.opts().opt_str("n").unwrap();
-    let pfx = if let Some(pfx) = a.opts().opt_str("p") {
-        pfx
-    } else {
-        genkey(64)
-    };
-    let bucket = a.opts().opt_str("b").unwrap();
     let file = a.opts().opt_str("f").unwrap();
     let support_ena = a.opts().opt_present("E");
 
-    let kimage = pfx.clone() + "/disk.raw";
-    let kmanifest = pfx.clone() + "/manifest.xml";
-
-    println!("UPLOADING DISK TO S3 AS: {}", kimage);
-    i_put_object(l.context(), &bucket, &kimage, &file).await?;
-    println!("COMPLETED UPLOAD");
-
-    println!("IMPORTING VOLUME:");
-    let volid =
-        i_import_volume(l.context(), &bucket, &kimage, &kmanifest).await?;
-    println!("COMPLETED VOLUME ID: {}", volid);
-
-    println!("CREATING SNAPSHOT:");
-    let snapid = i_create_snapshot(l.context(), &volid).await?;
+    println!("UPLOADING SNAPSHOT:");
+    let snapid = i_upload_snapshot(l.context(), &name, &file).await?;
     println!("COMPLETED SNAPSHOT ID: {}", snapid);
-
-    println!("REMOVING VOLUME:");
-    if let Err(e) = i_volume_rm(l.context(), &volid, false).await {
-        /*
-         * Seeing as we have done almost all of the actual work at this point,
-         * don't fail the command if we cannot delete the volume now.
-         */
-        println!("WARNING: COULD NOT REMOVE VOLUME: {:?}", e);
-    } else {
-        println!("REMOVED VOLUME ID: {}", volid);
-    }
 
     println!("REGISTERING IMAGE:");
     let ami =

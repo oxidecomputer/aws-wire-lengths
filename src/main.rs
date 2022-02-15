@@ -14,12 +14,10 @@ use rusoto_credential::{
 };
 use rusoto_ec2 as ec2;
 use rusoto_ec2_instance_connect as ec2ic;
-use rusoto_s3 as s3;
 use rusoto_sts as sts;
 
 use ec2::Ec2;
 use ec2ic::Ec2InstanceConnect;
-use s3::S3;
 use sts::Sts;
 
 mod base;
@@ -35,7 +33,6 @@ mod prelude {
 
     #[allow(unused_imports)]
     pub(crate) use anyhow::{anyhow, bail, Context, Result};
-    pub(crate) use bytes::BytesMut;
     pub(crate) use hiercmd::prelude::*;
     pub(crate) use rand::thread_rng;
     pub(crate) use rsa::pkcs8::{FromPrivateKey, ToPrivateKey};
@@ -43,9 +40,7 @@ mod prelude {
     pub(crate) use rusoto_core::RusotoError;
     pub(crate) use rusoto_ec2 as ec2;
     pub(crate) use rusoto_ec2_instance_connect as ec2ic;
-    pub(crate) use rusoto_s3 as s3;
     pub(crate) use rusoto_sts as sts;
-    pub(crate) use tokio::io::AsyncReadExt;
 
     pub(crate) use super::base::*;
     pub(crate) use super::util::*;
@@ -78,7 +73,6 @@ pub struct Stuff {
     region_ec2: Region,
     region_s3: Region,
     region_sts: Region,
-    s3: Option<s3::S3Client>,
     ec2: Option<ec2::Ec2Client>,
     ic: Option<ec2ic::Ec2InstanceConnectClient>,
     sts: Option<sts::StsClient>,
@@ -90,10 +84,6 @@ pub struct Stuff {
 impl Stuff {
     fn ec2(&self) -> &dyn Ec2 {
         self.ec2.as_ref().unwrap()
-    }
-
-    fn s3(&self) -> &dyn S3 {
-        self.s3.as_ref().unwrap()
     }
 
     fn sts(&self) -> &dyn Sts {
@@ -205,11 +195,6 @@ async fn main() -> Result<()> {
 
     if s.opts().opt_present("e") {
         let mut stuff = s.context_mut();
-        stuff.s3 = Some(s3::S3Client::new_with(
-            HttpClient::new()?,
-            EnvironmentProvider::default(),
-            stuff.region_s3.clone(),
-        ));
         stuff.ec2 = Some(ec2::Ec2Client::new_with(
             HttpClient::new()?,
             EnvironmentProvider::default(),
@@ -227,11 +212,6 @@ async fn main() -> Result<()> {
         ));
     } else {
         let mut stuff = s.context_mut();
-        stuff.s3 = Some(s3::S3Client::new_with(
-            HttpClient::new()?,
-            DefaultCredentialsProvider::new()?,
-            stuff.region_s3.clone(),
-        ));
         stuff.ec2 = Some(ec2::Ec2Client::new_with(
             HttpClient::new()?,
             DefaultCredentialsProvider::new()?,
