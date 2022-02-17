@@ -315,6 +315,36 @@ async fn do_object_get(mut l: Level<Stuff>) -> Result<()> {
     Ok(())
 }
 
+async fn do_presign_get(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("BUCKET KEY"));
+
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 2 {
+        bad_args!(l, "specify a bucket name and an object key");
+    }
+
+    let bucket = a.args()[0].clone();
+    let key = a.args()[1].clone();
+
+    let mut res = s
+        .more()
+        .s3()
+        .get_object()
+        .bucket(bucket)
+        .key(key)
+        .presigned(
+            aws_sdk_s3::presigning::config::PresigningConfig::builder()
+                .expires_in(std::time::Duration::from_secs(600))
+                .build()?,
+        )
+        .await?;
+
+    println!("{}", res.uri());
+    Ok(())
+}
+
 async fn do_object_rm(mut l: Level<Stuff>) -> Result<()> {
     l.usage_args(Some("BUCKET KEY"));
 
@@ -417,12 +447,24 @@ async fn do_object_put(mut l: Level<Stuff>) -> Result<()> {
     Ok(())
 }
 
+async fn do_presign(mut l: Level<Stuff>) -> Result<()> {
+    l.cmd("get", "presign a GET request", cmd!(do_presign_get))?;
+
+    sel!(l).run().await
+}
+
 async fn do_object(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list objects", cmd!(do_object_ls))?;
     l.cmd("get", "retrieve an object", cmd!(do_object_get))?;
     l.cmd("put", "store an object", cmd!(do_object_put))?;
     l.cmd("info", "inspect an object in detail", cmd!(do_object_info))?;
     l.cmda("delete", "rm", "delete an object", cmd!(do_object_rm))?;
+    l.cmda(
+        "presign",
+        "pre",
+        "presigned object requests",
+        cmd!(do_presign),
+    )?;
 
     sel!(l).run().await
 }
