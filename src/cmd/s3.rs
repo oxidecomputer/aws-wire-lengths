@@ -260,13 +260,25 @@ async fn do_object_info(mut l: Level<Stuff>) -> Result<()> {
     let res = s
         .more()
         .s3()
-        .get_object_acl()
-        .bucket(bucket)
-        .key(key)
+        .head_object()
+        .bucket(&bucket)
+        .key(&key)
         .send()
         .await?;
 
-    println!("res = {:#?}", res);
+    println!("{:#?}", res);
+
+    let res = s
+        .more()
+        .s3()
+        .get_object_acl()
+        .bucket(&bucket)
+        .key(&key)
+        .send()
+        .await?;
+
+    println!("{:#?}", res);
+
     Ok(())
 }
 
