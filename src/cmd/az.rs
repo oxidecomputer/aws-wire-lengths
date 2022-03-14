@@ -12,6 +12,7 @@ pub async fn do_az_ls(mut l: Level<Stuff>) -> Result<()> {
     l.add_column("name", 23, true);
     l.add_column("type", 10, true);
     l.add_column("state", 11, true);
+    l.add_column("group", 23, false);
 
     let a = no_args!(l);
     let mut t = a.table();
@@ -40,6 +41,7 @@ pub async fn do_az_ls(mut l: Level<Stuff>) -> Result<()> {
             },
         );
         r.add_stror("state", &az.state, "-");
+        r.add_stror("group", &az.network_border_group, "-");
 
         t.add_row(r);
     }
