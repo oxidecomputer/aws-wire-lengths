@@ -53,6 +53,7 @@ use cmd::config::do_config;
 use cmd::gateway::do_gateway;
 use cmd::image::{ami_from_file, do_image};
 use cmd::instance::do_instance;
+use cmd::interface::do_if;
 use cmd::ip::do_ip;
 use cmd::key::do_key;
 use cmd::nat::do_nat;
@@ -146,6 +147,7 @@ async fn main() -> Result<()> {
     l.cmd("nat", "managed NAT gateway management", cmd!(do_nat))?;
     l.cmda("route", "rt", "routing table management", cmd!(do_route))?;
     l.cmd("ip", "elastic IP address management", cmd!(do_ip))?;
+    l.cmda("interface", "if", "network interface management", cmd!(do_if))?;
     l.cmd(
         "config",
         "manage account- or region-level configuration",

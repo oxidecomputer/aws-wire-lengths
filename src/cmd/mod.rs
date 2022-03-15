@@ -3,6 +3,7 @@ pub mod config;
 pub mod gateway;
 pub mod image;
 pub mod instance;
+pub mod interface;
 pub mod ip;
 pub mod key;
 pub mod nat;
