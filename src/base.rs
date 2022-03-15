@@ -395,6 +395,30 @@ pub async fn get_subnet_fuzzy(
     one_ping_only("subnet", lookuparg, res.subnets)
 }
 
+pub async fn get_ip_fuzzy(
+    s: &Stuff,
+    lookuparg: &str,
+) -> Result<aws_sdk_ec2::model::Address> {
+    let res = s
+        .more()
+        .ec2()
+        .describe_addresses()
+        .filters(
+            aws_sdk_ec2::model::Filter::builder()
+                .name(if lookuparg.starts_with("eipalloc-") {
+                    "allocation-id"
+                } else {
+                    "tag:Name"
+                })
+                .values(lookuparg)
+                .build(),
+        )
+        .send()
+        .await?;
+
+    one_ping_only("elastic IP", lookuparg, res.addresses)
+}
+
 pub async fn get_nat_fuzzy(
     s: &Stuff,
     lookuparg: &str,
