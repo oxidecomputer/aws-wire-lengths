@@ -71,6 +71,8 @@ async fn do_bucket_create(mut l: Level<Stuff>) -> Result<()> {
 }
 
 async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
+    use aws_smithy_http::result::SdkError;
+
     l.usage_args(Some("BUCKET"));
 
     let a = args!(l);
@@ -96,7 +98,7 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
             }
             None => println!("no public access block for bucket?!"),
         },
-        Err(aws_sdk_ec2::SdkError::ServiceError { err, .. })
+        Err(SdkError::ServiceError { err, .. })
             if err.code() == Some("NoSuchPublicAccessBlockConfiguration") =>
         {
             println!("no public access block for bucket");
@@ -124,7 +126,7 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
             }
             None => println!("no policy for bucket?!"),
         },
-        Err(aws_sdk_ec2::SdkError::ServiceError { err, .. })
+        Err(SdkError::ServiceError { err, .. })
             if err.code() == Some("NoSuchBucketPolicy") =>
         {
             println!("no policy for bucket");
@@ -148,7 +150,7 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
             }
             None => println!("no policy status for bucket?!"),
         },
-        Err(aws_sdk_ec2::SdkError::ServiceError { err, .. })
+        Err(SdkError::ServiceError { err, .. })
             if err.code() == Some("NoSuchBucketPolicy") =>
         {
             println!("no policy status for bucket");
@@ -181,7 +183,7 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
             }
             None => println!("no ownership controls for bucket?!"),
         },
-        Err(aws_sdk_ec2::SdkError::ServiceError { err, .. })
+        Err(SdkError::ServiceError { err, .. })
             if err.code() == Some("OwnershipControlsNotFoundError") =>
         {
             println!("no ownership controls for bucket");
@@ -328,7 +330,7 @@ async fn do_presign_get(mut l: Level<Stuff>) -> Result<()> {
     let bucket = a.args()[0].clone();
     let key = a.args()[1].clone();
 
-    let mut res = s
+    let res = s
         .more()
         .s3()
         .get_object()
@@ -423,7 +425,7 @@ async fn do_object_put(mut l: Level<Stuff>) -> Result<()> {
         let body = hyper::Body::wrap_stream(stree);
         (
             known_size.try_into().unwrap(),
-            aws_sdk_s3::ByteStream::new(body.into()),
+            aws_sdk_s3::types::ByteStream::new(body.into()),
         )
     } else {
         /*
