@@ -196,6 +196,126 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
     Ok(())
 }
 
+async fn do_object_tree(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("BUCKET [PREFIX]"));
+
+    l.optflag("N", "", "output ncdu export format");
+
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().is_empty() {
+        bad_args!(l, "specify a bucket name to list");
+    } else if a.args().len() > 2 {
+        bad_args!(l, "too many arguments");
+    }
+
+    let bucket = a.args().get(0).cloned().unwrap();
+    let prefix = a.args().get(1).cloned();
+    let ncdu = a.opts().opt_present("N");
+
+    let mut list = s
+        .more()
+        .s3()
+        .list_objects_v2()
+        .bucket(&bucket)
+        .set_prefix(prefix)
+        .into_paginator()
+        .page_size(1000)
+        .send();
+
+    let mut stack = Vec::new();
+    fn indent(n: usize) -> String {
+        let mut out = String::new();
+        while out.len() < n * 4 {
+            out.push_str("    ");
+        }
+        out
+    }
+
+    if ncdu {
+        println!(
+            "{}",
+            r#"[1,0,{"progname":"aws-wire-lengths","progver":"0"},"#
+        );
+
+        /*
+         * Emit a "root" directory entry for the bucket itself:
+         */
+        println!(r#"[{{"name":"{}"}}"#, bucket);
+    }
+
+    while let Some(res) = list.next().await.transpose()? {
+        for o in res.contents().unwrap_or_default() {
+            /*
+             * We are only able to store and enumerate objects in S3, so we
+             * simulate directories by splitting on the delimiter character.
+             * The last component is, therefore, always a "file".
+             */
+            let key = o.key().ok_or_else(|| anyhow!("no key?"))?;
+            let levels = key.split('/').collect::<Vec<_>>();
+
+            while stack.len() > levels.len() - 1 {
+                stack.pop().unwrap();
+                if ncdu {
+                    println!("]");
+                }
+            }
+            for i in 0..(levels.len() - 1) {
+                if i < stack.len() {
+                    if stack[i] == levels[i] {
+                        /*
+                         * We are already in this directory.
+                         */
+                        continue;
+                    } else {
+                        /*
+                         * This stack entry, and everything to the right, is
+                         * wrong and must be discarded.
+                         */
+                        while stack.len() > i {
+                            stack.pop().unwrap();
+                            if ncdu {
+                                println!("]");
+                            }
+                        }
+                    }
+                }
+
+                /*
+                 * This is a new directory!
+                 */
+                if !ncdu {
+                    println!("{}{}/", indent(stack.len()), levels[i]);
+                } else {
+                    println!(r#",[{{"name":"{}"}}"#, levels[i]);
+                }
+                stack.push(levels[i].to_string());
+            }
+
+            if !ncdu {
+                println!("{}{}", indent(stack.len()), levels[levels.len() - 1]);
+            } else {
+                println!(
+                    r#",{{"name":"{}","asize":{},"dsize":{}}}"#,
+                    levels[levels.len() - 1],
+                    o.size(),
+                    o.size(),
+                );
+            }
+        }
+    }
+
+    if ncdu {
+        for _ in 0..stack.len() {
+            print!("]");
+        }
+        println!("{}", r#"]]"#);
+    }
+
+    Ok(())
+}
+
 async fn do_object_ls(mut l: Level<Stuff>) -> Result<()> {
     l.usage_args(Some("BUCKET [PREFIX]"));
 
@@ -457,6 +577,7 @@ async fn do_presign(mut l: Level<Stuff>) -> Result<()> {
 
 async fn do_object(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list objects", cmd!(do_object_ls))?;
+    l.cmd("tree", "list objects as a tree", cmd!(do_object_tree))?;
     l.cmd("get", "retrieve an object", cmd!(do_object_get))?;
     l.cmd("put", "store an object", cmd!(do_object_put))?;
     l.cmd("info", "inspect an object in detail", cmd!(do_object_info))?;
