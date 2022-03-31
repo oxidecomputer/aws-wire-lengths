@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::{Read, Write};
+use std::sync::Arc;
 
 use anyhow::{bail, Result};
 use rusoto_ec2 as ec2;
@@ -625,97 +626,184 @@ pub async fn i_upload_snapshot(
         bail!("no snapshot ID?");
     };
 
-    const CHUNKSZ: i32 = 512 * 1024;
+    const CHUNKSZ: u64 = 512 * 1024;
 
-    let mut nblocks = 0;
-    let expected_blocks = (byte_sz as i32) / CHUNKSZ;
-    loop {
-        /*
-         * EBS apparently operates in chunks of exactly 512KB, at least through
-         * this API.
-         */
-        let mut buf = vec![0u8; CHUNKSZ.try_into().unwrap()];
+    #[derive(Debug)]
+    struct UploadBlock {
+        block_index: u64,
+        block_data: Vec<u8>,
+        sha256: String,
+    }
 
-        let mut off = 0usize;
-        let mut eof = false;
-        loop {
-            let rem = buf.len().checked_sub(off).unwrap();
-            if rem == 0 {
-                break;
-            }
+    let mut handles = Vec::new();
+    let (tx, rx) = tokio::sync::mpsc::channel::<UploadBlock>(64);
+    let rx = Arc::new(tokio::sync::Mutex::new(rx));
+    let nblocks = Arc::new(tokio::sync::Mutex::new(0));
 
-            match f.read(&mut buf[off..off + rem]) {
-                Ok(0) => {
+    /*
+     * Create worker tasks.
+     */
+    for _ in 0..20 {
+        let ebs = s.more().ebs().clone();
+        let rx = Arc::clone(&rx);
+        let id = id.clone();
+        handles.push(tokio::spawn(async move {
+            loop {
+                /*
+                 * Make sure we do not hold the queue lock while we work on the
+                 * item we received.
+                 */
+                let ub = rx.lock().await.recv().await;
+
+                if let Some(ub) = ub {
                     /*
-                     * We have reached the end of the file, and need to extend
-                     * the buffer out with zeroes so that it is a multiple of
-                     * the chunk size.
+                     * Upload the chunk!
                      */
-                    buf[off..off + rem].fill(0);
-                    eof = true;
+                    ebs
+                        .put_snapshot_block()
+                        .snapshot_id(&id)
+                        .block_index(ub.block_index.try_into().unwrap())
+                        .block_data(ub.block_data.into())
+                        .data_length(CHUNKSZ.try_into().unwrap())
+                        .checksum_algorithm(
+                            aws_sdk_ebs::model::ChecksumAlgorithm::
+                            ChecksumAlgorithmSha256,
+                        )
+                        .checksum(ub.sha256)
+                        .send()
+                        .await?;
+                } else {
+                    /*
+                     * When the file reader task is done it will drop the queue,
+                     * which tells us there are no more chunks to upload.
+                     */
+                    return Ok(());
+                }
+            }
+        }));
+    }
+
+    /*
+     * Create file reader task:
+     */
+    let nblocks0 = Arc::clone(&nblocks);
+    handles.push(tokio::spawn(async move {
+        let expected_blocks = byte_sz / CHUNKSZ;
+        loop {
+            let mut nblocks = nblocks0.lock().await;
+
+            /*
+             * EBS apparently operates in chunks of exactly 512KB, at least
+             * through this API.
+             */
+            let mut buf = vec![0u8; CHUNKSZ.try_into().unwrap()];
+
+            let mut off = 0usize;
+            let mut eof = false;
+            loop {
+                let rem = buf.len().checked_sub(off).unwrap();
+                if rem == 0 {
                     break;
                 }
-                Ok(sz) => {
-                    off = off.checked_add(sz).unwrap();
-                }
-                Err(e) => {
-                    bail!("reading from file: {:?}", e);
+
+                match f.read(&mut buf[off..off + rem]) {
+                    Ok(0) => {
+                        /*
+                         * We have reached the end of the file.
+                         */
+                        if off == 0 {
+                            /*
+                             * We didn't end up using this buffer, so we do not
+                             * need to upload or count it.
+                             */
+                            return Ok(());
+                        }
+
+                        /*
+                         * We read a partial chunk, so we need to extend the
+                         * buffer out with zeroes so that it is a multiple of
+                         * the chunk size.
+                         */
+                        buf[off..off + rem].fill(0);
+                        eof = true;
+                        break;
+                    }
+                    Ok(sz) => {
+                        off = off.checked_add(sz).unwrap();
+                    }
+                    Err(e) => {
+                        bail!("reading from file: {:?}", e);
+                    }
                 }
             }
+
+            {
+                let mut out = std::io::stdout();
+                write!(
+                    out,
+                    "\ruploading block {:>7} of {:>7}  {:>3}%    ",
+                    (*nblocks) + 1,
+                    expected_blocks,
+                    100 * (*nblocks) / expected_blocks,
+                )?;
+                out.flush()?;
+            }
+
+            /*
+             * Calculate the SHA256 checksum for this chunk.
+             */
+            let mut digest = sha2::Sha256::new();
+            digest.update(&buf);
+            let sum = base64::encode(digest.finalize());
+
+            /*
+             * Submit the chunk to the upload work queue:
+             */
+            tx.send(UploadBlock {
+                block_index: *nblocks,
+                block_data: buf,
+                sha256: sum,
+            })
+            .await
+            .unwrap();
+
+            *nblocks += 1;
+
+            if eof {
+                return Ok(());
+            }
         }
+    }));
 
-        {
-            let mut out = std::io::stdout();
-            write!(
-                out,
-                "\ruploading block {:>7} of {:>7}  {:>3}%    ",
-                nblocks + 1,
-                expected_blocks,
-                100 * nblocks / expected_blocks,
-            )?;
-            out.flush()?;
-        }
-
-        /*
-         * Calculate the SHA256 checksum for this chunk.
-         */
-        let mut digest = sha2::Sha256::new();
-        digest.update(&buf);
-        let sum = base64::encode(digest.finalize());
-
-        /*
-         * Upload the chunk!
-         */
-        s.more()
-            .ebs()
-            .put_snapshot_block()
-            .snapshot_id(&id)
-            .block_index(nblocks)
-            .block_data(buf.into())
-            .data_length(CHUNKSZ)
-            .checksum_algorithm(
-                aws_sdk_ebs::model::ChecksumAlgorithm::ChecksumAlgorithmSha256,
-            )
-            .checksum(sum)
-            .send()
-            .await?;
-        nblocks += 1;
-
-        if eof {
-            break;
+    /*
+     * Wait for all of the upload tasks and the file reader task to complete.
+     * If there is a failure, report it and bail.
+     */
+    let results = futures::future::join_all(handles).await;
+    let mut ok = true;
+    for r in results {
+        if let Err(e) = r {
+            ok = false;
+            eprintln!("task failure? {:?}", e);
         }
     }
+    if !ok {
+        bail!("some tasks failed; aborting");
+    }
+
     println!();
 
     /*
      * Finalise the snapshot.
      */
+    let nblocks = *nblocks.lock().await;
+    println!("changed block count = {}", nblocks);
     let res = s
         .more()
         .ebs()
         .complete_snapshot()
         .snapshot_id(&id)
-        .changed_blocks_count(nblocks)
+        .changed_blocks_count(nblocks.try_into().unwrap())
         .send()
         .await?;
     println!("complete = {:#?}", res);
