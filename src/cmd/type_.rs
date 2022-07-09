@@ -86,6 +86,7 @@ async fn do_type_ls(mut l: Level<Stuff>) -> Result<()> {
                                 I386 => {
                                     bail!("386 only? {:?}", typ.instance_type())
                                 }
+                                Unknown(x) if x == "arm64_mac" => "arm_mac",
                                 other => {
                                     bail!("what is {:?}", other);
                                 }
