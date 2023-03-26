@@ -83,10 +83,10 @@ async fn do_type_ls(mut l: Level<Stuff>) -> Result<()> {
                                 X8664 => "x86",
                                 X8664Mac => "x86_mac",
                                 Arm64 => "arm",
+                                Arm64Mac => "arm_mac",
                                 I386 => {
                                     bail!("386 only? {:?}", typ.instance_type())
                                 }
-                                Unknown(x) if x == "arm64_mac" => "arm_mac",
                                 other => {
                                     bail!("what is {:?}", other);
                                 }

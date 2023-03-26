@@ -754,7 +754,7 @@ pub async fn i_upload_snapshot(
              */
             let mut digest = sha2::Sha256::new();
             digest.update(&buf);
-            let sum = base64::encode(digest.finalize());
+            let sum = base64_encode(&digest.finalize());
 
             /*
              * Submit the chunk to the upload work queue:

@@ -35,7 +35,7 @@ mod prelude {
     pub(crate) use anyhow::{anyhow, bail, Context, Result};
     pub(crate) use hiercmd::prelude::*;
     pub(crate) use rand::thread_rng;
-    pub(crate) use rsa::pkcs8::{FromPrivateKey, ToPrivateKey};
+    pub(crate) use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey};
     pub(crate) use rsa::PublicKeyParts;
     pub(crate) use rusoto_core::RusotoError;
     pub(crate) use rusoto_ec2 as ec2;
@@ -147,7 +147,12 @@ async fn main() -> Result<()> {
     l.cmd("nat", "managed NAT gateway management", cmd!(do_nat))?;
     l.cmda("route", "rt", "routing table management", cmd!(do_route))?;
     l.cmd("ip", "elastic IP address management", cmd!(do_ip))?;
-    l.cmda("interface", "if", "network interface management", cmd!(do_if))?;
+    l.cmda(
+        "interface",
+        "if",
+        "network interface management",
+        cmd!(do_if),
+    )?;
     l.cmd(
         "config",
         "manage account- or region-level configuration",

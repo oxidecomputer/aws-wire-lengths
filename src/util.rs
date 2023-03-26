@@ -1,4 +1,5 @@
 use anyhow::{bail, Result};
+use base64::Engine;
 use chrono::prelude::*;
 use hiercmd::prelude::*;
 use rand::distributions::Alphanumeric;
@@ -132,4 +133,8 @@ pub fn one_ping_only<T>(
 
 pub fn sleep(ms: u64) {
     std::thread::sleep(std::time::Duration::from_millis(ms));
+}
+
+pub fn base64_encode(u: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(u)
 }

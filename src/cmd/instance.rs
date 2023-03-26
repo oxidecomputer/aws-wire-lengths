@@ -56,9 +56,9 @@ async fn create_instance(mut l: Level<Stuff>) -> Result<()> {
      */
     let defs: HashMap<String, String> = if let Some(p) = a.opts().opt_str("f") {
         let mut f = File::open(&p)?;
-        let mut buf = Vec::<u8>::new();
-        f.read_to_end(&mut buf)?;
-        toml::from_slice(buf.as_slice())?
+        let mut s = String::new();
+        f.read_to_string(&mut s)?;
+        toml::from_str(&s)?
     } else {
         HashMap::new()
     };
@@ -405,7 +405,7 @@ async fn sercons(mut l: Level<Stuff>) -> Result<()> {
     } else {
         eprintln!("INFO: generating a new SSH key...");
         let key = rsa::RsaPrivateKey::new(&mut thread_rng(), 2048)?;
-        let privkey = key.to_pkcs8_pem()?;
+        let privkey = key.to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)?;
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .truncate(true)
@@ -451,8 +451,7 @@ async fn sercons(mut l: Level<Stuff>) -> Result<()> {
     raw.push(0);
     raw.extend_from_slice(&n);
 
-    let pubkey =
-        format!("ssh-rsa {}", base64::encode_config(raw, base64::STANDARD));
+    let pubkey = format!("ssh-rsa {}", base64_encode(&raw));
 
     if start {
         start_instance(s, &i.id).await?;
@@ -848,7 +847,7 @@ async fn i_create_instance(s: &Stuff, io: &InstanceOptions) -> Result<String> {
                 ..Default::default()
             },
         ]),
-        user_data: io.user_data.as_deref().map(base64::encode),
+        user_data: io.user_data.as_deref().map(|x| base64_encode(x.as_bytes())),
         ..Default::default()
     };
 

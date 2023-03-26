@@ -98,8 +98,9 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
             }
             None => println!("no public access block for bucket?!"),
         },
-        Err(SdkError::ServiceError { err, .. })
-            if err.code() == Some("NoSuchPublicAccessBlockConfiguration") =>
+        Err(SdkError::ServiceError(err))
+            if err.err().code()
+                == Some("NoSuchPublicAccessBlockConfiguration") =>
         {
             println!("no public access block for bucket");
         }
@@ -126,8 +127,8 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
             }
             None => println!("no policy for bucket?!"),
         },
-        Err(SdkError::ServiceError { err, .. })
-            if err.code() == Some("NoSuchBucketPolicy") =>
+        Err(SdkError::ServiceError(err))
+            if err.err().code() == Some("NoSuchBucketPolicy") =>
         {
             println!("no policy for bucket");
         }
@@ -150,8 +151,8 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
             }
             None => println!("no policy status for bucket?!"),
         },
-        Err(SdkError::ServiceError { err, .. })
-            if err.code() == Some("NoSuchBucketPolicy") =>
+        Err(SdkError::ServiceError(err))
+            if err.err().code() == Some("NoSuchBucketPolicy") =>
         {
             println!("no policy status for bucket");
         }
@@ -183,8 +184,8 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
             }
             None => println!("no ownership controls for bucket?!"),
         },
-        Err(SdkError::ServiceError { err, .. })
-            if err.code() == Some("OwnershipControlsNotFoundError") =>
+        Err(SdkError::ServiceError(err))
+            if err.err().code() == Some("OwnershipControlsNotFoundError") =>
         {
             println!("no ownership controls for bucket");
         }
