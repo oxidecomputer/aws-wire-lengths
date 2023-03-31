@@ -13,6 +13,7 @@ pub const WIDTH_IGW: usize = 21;
 pub const WIDTH_NAT: usize = 21;
 pub const WIDTH_EIP: usize = 26;
 pub const WIDTH_ENI: usize = 21;
+pub const WIDTH_VOL: usize = 21;
 
 pub const WIDTH_UTC: usize = 20;
 

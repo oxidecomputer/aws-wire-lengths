@@ -709,8 +709,17 @@ async fn ip(mut l: Level<Stuff>) -> Result<()> {
 }
 
 async fn volumes(mut l: Level<Stuff>) -> Result<()> {
+    l.add_column("id", WIDTH_VOL, true);
+    l.add_column("size", 7, true);
+    l.add_column("flags", 5, true);
+    l.add_column("state", 8, true);
+    l.add_column("astate", 8, true);
+    l.add_column("device", 6, true);
+    l.add_column("name", 10, true);
+
     let a = args!(l);
     let s = l.context();
+    let mut t = a.table();
 
     if a.args().len() != 1 {
         bail!("specify just one instance");
@@ -734,17 +743,45 @@ async fn volumes(mut l: Level<Stuff>) -> Result<()> {
 
     for vol in res.volumes().unwrap_or_default() {
         for att in vol.attachments().unwrap_or_default() {
-            println!(
-                "{} name {:?} size {} vst {:?} ast {:?} dev {:?}",
-                vol.volume_id().unwrap(),
-                vol.tags.tag("Name"),
-                vol.size().unwrap_or(0),
-                vol.state(),
-                att.state(),
-                att.device(),
+            let mut r = Row::default();
+
+            let flags =
+                [att.delete_on_termination.unwrap_or_default().as_flag("D")]
+                    .join("");
+
+            let size_gbs: u64 = vol.size().unwrap_or(0).try_into().unwrap();
+
+            r.add_str("id", vol.volume_id().unwrap());
+            r.add_str("flags", &flags);
+            r.add_stror("name", &vol.tags.tag("Name"), "-");
+            r.add_bytes(
+                "size",
+                size_gbs.checked_mul(1024 * 1024 * 1024).unwrap(),
             );
+            r.add_stror(
+                "state",
+                &vol.state().map(|v| v.as_str().to_string()),
+                "-",
+            );
+            r.add_stror(
+                "astate",
+                &att.state().map(|a| a.as_str().to_string()),
+                "-",
+            );
+            r.add_str(
+                "device",
+                if let Some(dev) = att.device() {
+                    dev.trim_start_matches("/dev/")
+                } else {
+                    "-"
+                },
+            );
+
+            t.add_row(r);
         }
     }
+
+    print!("{}", t.output()?);
     Ok(())
 }
 
