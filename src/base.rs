@@ -335,7 +335,7 @@ pub async fn get_vol_fuzzy(
         .filters(
             aws_sdk_ec2::model::Filter::builder()
                 .name(if lookuparg.starts_with("vol-") {
-                    "vol-id"
+                    "volume-id"
                 } else {
                     "tag:Name"
                 })

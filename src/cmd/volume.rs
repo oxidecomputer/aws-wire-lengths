@@ -5,6 +5,12 @@ pub async fn do_volume(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("destroy", "rm", "destroy a volume", cmd!(do_volume_rm))?;
     l.cmd("create", "create a volume", cmd!(do_volume_create))?;
     l.cmd("attach", "attach a volume", cmd!(do_volume_attach))?;
+    l.cmd("detach", "detach a volume", cmd!(do_volume_detach))?;
+    l.cmd(
+        "snapshot",
+        "create a snapshot of a volume",
+        cmd!(do_volume_snapshot),
+    )?;
 
     sel!(l).run().await
 }
@@ -134,6 +140,33 @@ async fn do_volume_create(mut l: Level<Stuff>) -> Result<()> {
     Ok(())
 }
 
+async fn do_volume_detach(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("INSTANCE VOLUME DEVPATH"));
+
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 3 {
+        bad_args!(l, "specify instance, volume, and device name");
+    }
+
+    let i = get_instance_fuzzy(s, a.args().get(0).unwrap().as_str()).await?;
+    let v = get_vol_fuzzy(s, a.args().get(1).unwrap().as_str()).await?;
+
+    let res = s
+        .more()
+        .ec2()
+        .detach_volume()
+        .instance_id(&i.id)
+        .volume_id(v.volume_id().unwrap())
+        .device(a.args().get(2).unwrap())
+        .send()
+        .await?;
+
+    println!("{:#?}", res);
+    Ok(())
+}
+
 async fn do_volume_attach(mut l: Level<Stuff>) -> Result<()> {
     l.usage_args(Some("INSTANCE VOLUME DEVPATH"));
 
@@ -158,5 +191,45 @@ async fn do_volume_attach(mut l: Level<Stuff>) -> Result<()> {
         .await?;
 
     println!("{:#?}", res);
+    Ok(())
+}
+
+async fn do_volume_snapshot(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("VOLUME SNAPSHOT-NAME"));
+
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 2 {
+        bad_args!(l, "specify volume and snapshot name");
+    }
+
+    let v = get_vol_fuzzy(s, a.args().get(0).unwrap().as_str()).await?;
+
+    let tags = aws_sdk_ec2::model::TagSpecification::builder()
+        .resource_type(aws_sdk_ec2::model::ResourceType::Snapshot)
+        .tags(
+            aws_sdk_ec2::model::Tag::builder()
+                .key("Name")
+                .value(a.args().get(1).unwrap())
+                .build(),
+        )
+        .build();
+
+    let res = s
+        .more()
+        .ec2()
+        .create_snapshot()
+        .volume_id(v.volume_id.as_deref().unwrap())
+        .tag_specifications(tags)
+        .send()
+        .await?;
+
+    println!("{:#?}", res);
+
+    if let Some(id) = &res.snapshot_id {
+        println!("snapshot id = {id}");
+    }
+
     Ok(())
 }
