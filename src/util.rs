@@ -69,7 +69,7 @@ pub trait TagExtractor {
     fn tag(&self, n: &str) -> Option<String>;
 }
 
-impl TagExtractor for Option<Vec<aws_sdk_ec2::model::Tag>> {
+impl TagExtractor for Option<Vec<aws_sdk_ec2::types::Tag>> {
     fn tag(&self, n: &str) -> Option<String> {
         if let Some(tags) = self.as_ref() {
             for tag in tags.iter() {

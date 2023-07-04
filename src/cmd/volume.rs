@@ -115,10 +115,10 @@ async fn do_volume_create(mut l: Level<Stuff>) -> Result<()> {
 
     let size: i32 = a.args().get(1).unwrap().parse()?;
 
-    let tags = aws_sdk_ec2::model::TagSpecification::builder()
-        .resource_type(aws_sdk_ec2::model::ResourceType::Volume)
+    let tags = aws_sdk_ec2::types::TagSpecification::builder()
+        .resource_type(aws_sdk_ec2::types::ResourceType::Volume)
         .tags(
-            aws_sdk_ec2::model::Tag::builder()
+            aws_sdk_ec2::types::Tag::builder()
                 .key("Name")
                 .value(a.args().get(0).unwrap())
                 .build(),
@@ -206,10 +206,10 @@ async fn do_volume_snapshot(mut l: Level<Stuff>) -> Result<()> {
 
     let v = get_vol_fuzzy(s, a.args().get(0).unwrap().as_str()).await?;
 
-    let tags = aws_sdk_ec2::model::TagSpecification::builder()
-        .resource_type(aws_sdk_ec2::model::ResourceType::Snapshot)
+    let tags = aws_sdk_ec2::types::TagSpecification::builder()
+        .resource_type(aws_sdk_ec2::types::ResourceType::Snapshot)
         .tags(
-            aws_sdk_ec2::model::Tag::builder()
+            aws_sdk_ec2::types::Tag::builder()
                 .key("Name")
                 .value(a.args().get(1).unwrap())
                 .build(),

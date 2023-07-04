@@ -72,9 +72,9 @@ async fn image_grant(mut l: Level<Stuff>) -> Result<()> {
         .image_id(image.image_id().unwrap())
         .attribute("launchPermission")
         .launch_permission(
-            aws_sdk_ec2::model::LaunchPermissionModifications::builder()
+            aws_sdk_ec2::types::LaunchPermissionModifications::builder()
                 .add(
-                    aws_sdk_ec2::model::LaunchPermission::builder()
+                    aws_sdk_ec2::types::LaunchPermission::builder()
                         .user_id(a.args().get(1).unwrap().as_str())
                         .build(),
                 )
@@ -105,9 +105,9 @@ async fn image_revoke(mut l: Level<Stuff>) -> Result<()> {
         .image_id(image.image_id().unwrap())
         .attribute("launchPermission")
         .launch_permission(
-            aws_sdk_ec2::model::LaunchPermissionModifications::builder()
+            aws_sdk_ec2::types::LaunchPermissionModifications::builder()
                 .remove(
-                    aws_sdk_ec2::model::LaunchPermission::builder()
+                    aws_sdk_ec2::types::LaunchPermission::builder()
                         .user_id(a.args().get(1).unwrap().as_str())
                         .build(),
                 )
@@ -186,14 +186,14 @@ async fn do_image_copy(mut l: Level<Stuff>) -> Result<()> {
             };
 
             match image.state {
-                Some(aws_sdk_ec2::model::ImageState::Available) => {
+                Some(aws_sdk_ec2::types::ImageState::Available) => {
                     eprintln!(
                         "image is now available in {}",
                         a.args()[1].as_str()
                     );
                     break;
                 }
-                Some(aws_sdk_ec2::model::ImageState::Pending) | None => {}
+                Some(aws_sdk_ec2::types::ImageState::Pending) | None => {}
                 Some(other) => {
                     bail!("unexpected image state = {:?}", other);
                 }
@@ -223,7 +223,7 @@ async fn image_dump(mut l: Level<Stuff>) -> Result<()> {
 
     let res = c
         .describe_image_attribute()
-        .attribute(aws_sdk_ec2::model::ImageAttributeName::LaunchPermission)
+        .attribute(aws_sdk_ec2::types::ImageAttributeName::LaunchPermission)
         .image_id(image.image_id().unwrap())
         .send()
         .await?;

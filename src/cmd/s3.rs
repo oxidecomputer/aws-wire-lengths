@@ -51,12 +51,12 @@ async fn do_bucket_create(mut l: Level<Stuff>) -> Result<()> {
         .s3()
         .create_bucket()
         .object_ownership(
-            aws_sdk_s3::model::ObjectOwnership::BucketOwnerEnforced,
+            aws_sdk_s3::types::ObjectOwnership::BucketOwnerEnforced,
         )
         .create_bucket_configuration(
-            aws_sdk_s3::model::CreateBucketConfiguration::builder()
+            aws_sdk_s3::types::CreateBucketConfiguration::builder()
                 .location_constraint(
-                    aws_sdk_s3::model::BucketLocationConstraint::from(
+                    aws_sdk_s3::types::BucketLocationConstraint::from(
                         s.more().region_s3().to_string().as_str(),
                     ),
                 )
@@ -99,7 +99,7 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
             None => println!("no public access block for bucket?!"),
         },
         Err(SdkError::ServiceError(err))
-            if err.err().code()
+            if err.err().meta().code()
                 == Some("NoSuchPublicAccessBlockConfiguration") =>
         {
             println!("no public access block for bucket");
@@ -128,7 +128,7 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
             None => println!("no policy for bucket?!"),
         },
         Err(SdkError::ServiceError(err))
-            if err.err().code() == Some("NoSuchBucketPolicy") =>
+            if err.err().meta().code() == Some("NoSuchBucketPolicy") =>
         {
             println!("no policy for bucket");
         }
@@ -152,7 +152,7 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
             None => println!("no policy status for bucket?!"),
         },
         Err(SdkError::ServiceError(err))
-            if err.err().code() == Some("NoSuchBucketPolicy") =>
+            if err.err().meta().code() == Some("NoSuchBucketPolicy") =>
         {
             println!("no policy status for bucket");
         }
@@ -185,7 +185,8 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
             None => println!("no ownership controls for bucket?!"),
         },
         Err(SdkError::ServiceError(err))
-            if err.err().code() == Some("OwnershipControlsNotFoundError") =>
+            if err.err().meta().code()
+                == Some("OwnershipControlsNotFoundError") =>
         {
             println!("no ownership controls for bucket");
         }
@@ -458,7 +459,7 @@ async fn do_presign_get(mut l: Level<Stuff>) -> Result<()> {
         .bucket(bucket)
         .key(key)
         .presigned(
-            aws_sdk_s3::presigning::config::PresigningConfig::builder()
+            aws_sdk_s3::presigning::PresigningConfig::builder()
                 .expires_in(std::time::Duration::from_secs(600))
                 .build()?,
         )
@@ -546,7 +547,7 @@ async fn do_object_put(mut l: Level<Stuff>) -> Result<()> {
         let body = hyper::Body::wrap_stream(stree);
         (
             known_size.try_into().unwrap(),
-            aws_sdk_s3::types::ByteStream::new(body.into()),
+            aws_sdk_s3::primitives::ByteStream::new(body.into()),
         )
     } else {
         /*

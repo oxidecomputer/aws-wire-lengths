@@ -32,12 +32,12 @@ async fn create(mut l: Level<Stuff>) -> Result<()> {
         .more()
         .ec2()
         .allocate_address()
-        .domain(aws_sdk_ec2::model::DomainType::Vpc)
+        .domain(aws_sdk_ec2::types::DomainType::Vpc)
         .tag_specifications(
-            aws_sdk_ec2::model::TagSpecification::builder()
-                .resource_type(aws_sdk_ec2::model::ResourceType::ElasticIp)
+            aws_sdk_ec2::types::TagSpecification::builder()
+                .resource_type(aws_sdk_ec2::types::ResourceType::ElasticIp)
                 .tags(
-                    aws_sdk_ec2::model::Tag::builder()
+                    aws_sdk_ec2::types::Tag::builder()
                         .key("Name")
                         .value(a.args().get(0).unwrap())
                         .build(),

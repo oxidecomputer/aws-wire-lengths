@@ -36,10 +36,10 @@ async fn do_vpc_create(mut l: Level<Stuff>) -> Result<()> {
         bad_args!(l, "specify VPC name and CIDR block");
     }
 
-    let tags = aws_sdk_ec2::model::TagSpecification::builder()
-        .resource_type(aws_sdk_ec2::model::ResourceType::Vpc)
+    let tags = aws_sdk_ec2::types::TagSpecification::builder()
+        .resource_type(aws_sdk_ec2::types::ResourceType::Vpc)
         .tags(
-            aws_sdk_ec2::model::Tag::builder()
+            aws_sdk_ec2::types::Tag::builder()
                 .key("Name")
                 .value(a.args().get(0).unwrap())
                 .build(),

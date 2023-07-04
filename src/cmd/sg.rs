@@ -40,39 +40,39 @@ struct Rule {
 }
 
 impl Rule {
-    fn to_ip_permission(&self, sgid: &str) -> aws_sdk_ec2::model::IpPermission {
-        let mut b = aws_sdk_ec2::model::IpPermission::builder();
+    fn to_ip_permission(&self, sgid: &str) -> aws_sdk_ec2::types::IpPermission {
+        let mut b = aws_sdk_ec2::types::IpPermission::builder();
 
         b = match &self.target {
             RuleTarget::Ipv4Any => b.ip_ranges(
-                aws_sdk_ec2::model::IpRange::builder()
+                aws_sdk_ec2::types::IpRange::builder()
                     .cidr_ip("0.0.0.0/0")
                     .set_description(self.description.clone())
                     .build(),
             ),
             RuleTarget::Ipv4(cidr) => b.ip_ranges(
-                aws_sdk_ec2::model::IpRange::builder().cidr_ip(cidr).build(),
+                aws_sdk_ec2::types::IpRange::builder().cidr_ip(cidr).build(),
             ),
             RuleTarget::Ipv6Any => b.ipv6_ranges(
-                aws_sdk_ec2::model::Ipv6Range::builder()
+                aws_sdk_ec2::types::Ipv6Range::builder()
                     .cidr_ipv6("0::0/0")
                     .set_description(self.description.clone())
                     .build(),
             ),
             RuleTarget::Ipv6(cidr) => b.ipv6_ranges(
-                aws_sdk_ec2::model::Ipv6Range::builder()
+                aws_sdk_ec2::types::Ipv6Range::builder()
                     .cidr_ipv6(cidr)
                     .set_description(self.description.clone())
                     .build(),
             ),
             RuleTarget::ThisGroup => b.user_id_group_pairs(
-                aws_sdk_ec2::model::UserIdGroupPair::builder()
+                aws_sdk_ec2::types::UserIdGroupPair::builder()
                     .group_id(sgid)
                     .set_description(self.description.clone())
                     .build(),
             ),
             RuleTarget::OtherGroup(other) => b.user_id_group_pairs(
-                aws_sdk_ec2::model::UserIdGroupPair::builder()
+                aws_sdk_ec2::types::UserIdGroupPair::builder()
                     .group_id(other)
                     .set_description(self.description.clone())
                     .build(),
@@ -250,7 +250,7 @@ trait TheirRuleExt {
     fn target(&self) -> Result<RuleTarget>;
 }
 
-impl TheirRuleExt for aws_sdk_ec2::model::SecurityGroupRule {
+impl TheirRuleExt for aws_sdk_ec2::types::SecurityGroupRule {
     fn to_rule(&self) -> Result<Rule> {
         Ok(Rule {
             dir: match self.is_egress() {
@@ -474,7 +474,7 @@ async fn apply(mut l: Level<Stuff>) -> Result<()> {
         .ec2()
         .describe_security_group_rules()
         .filters(
-            aws_sdk_ec2::model::Filter::builder()
+            aws_sdk_ec2::types::Filter::builder()
                 .name("group-id")
                 .values(&id)
                 .build(),
@@ -614,7 +614,7 @@ async fn show(mut l: Level<Stuff>) -> Result<()> {
     let res = c
         .describe_security_group_rules()
         .filters(
-            aws_sdk_ec2::model::Filter::builder()
+            aws_sdk_ec2::types::Filter::builder()
                 .name("group-id")
                 .values(id)
                 .build(),

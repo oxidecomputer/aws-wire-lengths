@@ -34,10 +34,10 @@ async fn create(mut l: Level<Stuff>) -> Result<()> {
         .availability_zone(a.opts().opt_str("az").unwrap())
         .cidr_block(cidr_block)
         .tag_specifications(
-            aws_sdk_ec2::model::TagSpecification::builder()
-                .resource_type(aws_sdk_ec2::model::ResourceType::Subnet)
+            aws_sdk_ec2::types::TagSpecification::builder()
+                .resource_type(aws_sdk_ec2::types::ResourceType::Subnet)
                 .tags(
-                    aws_sdk_ec2::model::Tag::builder()
+                    aws_sdk_ec2::types::Tag::builder()
                         .key("Name")
                         .value(name)
                         .build(),

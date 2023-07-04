@@ -19,7 +19,7 @@ async fn list(mut l: Level<Stuff>) -> Result<()> {
     let mut t = a.table();
 
     let filters = if let Some(la) = a.opts().opt_str("vpc") {
-        Some(vec![aws_sdk_ec2::model::Filter::builder()
+        Some(vec![aws_sdk_ec2::types::Filter::builder()
             .name("vpc-id")
             .values(get_vpc_fuzzy(s, &la).await?.vpc_id.unwrap())
             .build()])
@@ -62,7 +62,7 @@ async fn create(mut l: Level<Stuff>) -> Result<()> {
     let name = a.args().get(0).unwrap().to_string();
     let net = get_subnet_fuzzy(s, a.args().get(1).unwrap().as_str()).await?;
 
-    let nametag = aws_sdk_ec2::model::Tag::builder()
+    let nametag = aws_sdk_ec2::types::Tag::builder()
         .key("Name")
         .value(&name)
         .build();
@@ -75,8 +75,8 @@ async fn create(mut l: Level<Stuff>) -> Result<()> {
         .ec2()
         .allocate_address()
         .tag_specifications(
-            aws_sdk_ec2::model::TagSpecification::builder()
-                .resource_type(aws_sdk_ec2::model::ResourceType::ElasticIp)
+            aws_sdk_ec2::types::TagSpecification::builder()
+                .resource_type(aws_sdk_ec2::types::ResourceType::ElasticIp)
                 .tags(nametag.clone())
                 .build(),
         )
@@ -96,8 +96,8 @@ async fn create(mut l: Level<Stuff>) -> Result<()> {
         .subnet_id(net.subnet_id().unwrap())
         .allocation_id(res.allocation_id().unwrap())
         .tag_specifications(
-            aws_sdk_ec2::model::TagSpecification::builder()
-                .resource_type(aws_sdk_ec2::model::ResourceType::Natgateway)
+            aws_sdk_ec2::types::TagSpecification::builder()
+                .resource_type(aws_sdk_ec2::types::ResourceType::Natgateway)
                 .tags(nametag)
                 .build(),
         )

@@ -22,7 +22,7 @@ async fn list(mut l: Level<Stuff>) -> Result<()> {
     let mut t = a.table();
 
     let filters = if let Some(la) = a.opts().opt_str("vpc") {
-        Some(vec![aws_sdk_ec2::model::Filter::builder()
+        Some(vec![aws_sdk_ec2::types::Filter::builder()
             .name("attachment.vpc-id")
             .values(get_vpc_fuzzy(s, &la).await?.vpc_id.unwrap())
             .build()])
@@ -79,12 +79,12 @@ async fn create(mut l: Level<Stuff>) -> Result<()> {
         .ec2()
         .create_internet_gateway()
         .tag_specifications(
-            aws_sdk_ec2::model::TagSpecification::builder()
+            aws_sdk_ec2::types::TagSpecification::builder()
                 .resource_type(
-                    aws_sdk_ec2::model::ResourceType::InternetGateway,
+                    aws_sdk_ec2::types::ResourceType::InternetGateway,
                 )
                 .tags(
-                    aws_sdk_ec2::model::Tag::builder()
+                    aws_sdk_ec2::types::Tag::builder()
                         .key("Name")
                         .value(&name)
                         .build(),

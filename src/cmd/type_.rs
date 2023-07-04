@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use aws_sdk_ec2::model::Filter;
+use aws_sdk_ec2::types::Filter;
 use futures::StreamExt;
 
 pub async fn do_type(mut l: Level<Stuff>) -> Result<()> {
@@ -70,7 +70,7 @@ async fn do_type_ls(mut l: Level<Stuff>) -> Result<()> {
 
             let arch = if let Some(pi) = typ.processor_info() {
                 if let Some(arch) = pi.supported_architectures() {
-                    use aws_sdk_ec2::model::ArchitectureType::*;
+                    use aws_sdk_ec2::types::ArchitectureType::*;
                     Some(
                         if arch.len() != 1 {
                             if arch.contains(&I386) && arch.contains(&X8664) {
@@ -120,8 +120,8 @@ async fn do_type_ls(mut l: Level<Stuff>) -> Result<()> {
                     |ena| {
                         matches!(
                             ena,
-                            aws_sdk_ec2::model::EnaSupport::Required
-                                | aws_sdk_ec2::model::EnaSupport::Supported
+                            aws_sdk_ec2::types::EnaSupport::Required
+                                | aws_sdk_ec2::types::EnaSupport::Supported
                         )
                     },
                 );

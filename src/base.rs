@@ -327,13 +327,13 @@ async fn get_instance_x(
 pub async fn get_vol_fuzzy(
     s: &Stuff,
     lookuparg: &str,
-) -> Result<aws_sdk_ec2::model::Volume> {
+) -> Result<aws_sdk_ec2::types::Volume> {
     let res = s
         .more()
         .ec2()
         .describe_volumes()
         .filters(
-            aws_sdk_ec2::model::Filter::builder()
+            aws_sdk_ec2::types::Filter::builder()
                 .name(if lookuparg.starts_with("vol-") {
                     "volume-id"
                 } else {
@@ -351,13 +351,13 @@ pub async fn get_vol_fuzzy(
 pub async fn get_image_fuzzy(
     s: &Stuff,
     lookuparg: &str,
-) -> Result<aws_sdk_ec2::model::Image> {
+) -> Result<aws_sdk_ec2::types::Image> {
     let res = s
         .more()
         .ec2()
         .describe_images()
         .filters(
-            aws_sdk_ec2::model::Filter::builder()
+            aws_sdk_ec2::types::Filter::builder()
                 .name(if lookuparg.starts_with("ami-") {
                     "image-id"
                 } else {
@@ -375,13 +375,13 @@ pub async fn get_image_fuzzy(
 pub async fn get_subnet_fuzzy(
     s: &Stuff,
     lookuparg: &str,
-) -> Result<aws_sdk_ec2::model::Subnet> {
+) -> Result<aws_sdk_ec2::types::Subnet> {
     let res = s
         .more()
         .ec2()
         .describe_subnets()
         .filters(
-            aws_sdk_ec2::model::Filter::builder()
+            aws_sdk_ec2::types::Filter::builder()
                 .name(if lookuparg.starts_with("subnet-") {
                     "subnet-id"
                 } else {
@@ -399,13 +399,13 @@ pub async fn get_subnet_fuzzy(
 pub async fn get_ip_fuzzy(
     s: &Stuff,
     lookuparg: &str,
-) -> Result<aws_sdk_ec2::model::Address> {
+) -> Result<aws_sdk_ec2::types::Address> {
     let res = s
         .more()
         .ec2()
         .describe_addresses()
         .filters(
-            aws_sdk_ec2::model::Filter::builder()
+            aws_sdk_ec2::types::Filter::builder()
                 .name(if lookuparg.starts_with("eipalloc-") {
                     "allocation-id"
                 } else {
@@ -423,13 +423,13 @@ pub async fn get_ip_fuzzy(
 pub async fn get_nat_fuzzy(
     s: &Stuff,
     lookuparg: &str,
-) -> Result<aws_sdk_ec2::model::NatGateway> {
+) -> Result<aws_sdk_ec2::types::NatGateway> {
     let res = s
         .more()
         .ec2()
         .describe_nat_gateways()
         .filter(
-            aws_sdk_ec2::model::Filter::builder()
+            aws_sdk_ec2::types::Filter::builder()
                 .name(if lookuparg.starts_with("igw-") {
                     "nat-gateway-id"
                 } else {
@@ -447,13 +447,13 @@ pub async fn get_nat_fuzzy(
 pub async fn get_igw_fuzzy(
     s: &Stuff,
     lookuparg: &str,
-) -> Result<aws_sdk_ec2::model::InternetGateway> {
+) -> Result<aws_sdk_ec2::types::InternetGateway> {
     let res = s
         .more()
         .ec2()
         .describe_internet_gateways()
         .filters(
-            aws_sdk_ec2::model::Filter::builder()
+            aws_sdk_ec2::types::Filter::builder()
                 .name(if lookuparg.starts_with("igw-") {
                     "internet-gateway-id"
                 } else {
@@ -471,13 +471,13 @@ pub async fn get_igw_fuzzy(
 pub async fn get_vpc_fuzzy(
     s: &Stuff,
     lookuparg: &str,
-) -> Result<aws_sdk_ec2::model::Vpc> {
+) -> Result<aws_sdk_ec2::types::Vpc> {
     let res = s
         .more()
         .ec2()
         .describe_vpcs()
         .filters(
-            aws_sdk_ec2::model::Filter::builder()
+            aws_sdk_ec2::types::Filter::builder()
                 .name(if lookuparg.starts_with("vpc-") {
                     "vpc-id"
                 } else {
@@ -523,9 +523,9 @@ pub async fn get_rt_fuzzy(
     s: &Stuff,
     lookuparg: &str,
     direct_only: bool,
-) -> Result<aws_sdk_ec2::model::RouteTable> {
+) -> Result<aws_sdk_ec2::types::RouteTable> {
     let filters = Some(if lookuparg.starts_with("rtb-") {
-        vec![aws_sdk_ec2::model::Filter::builder()
+        vec![aws_sdk_ec2::types::Filter::builder()
             .name("route-table-id")
             .values(lookuparg)
             .build()]
@@ -534,11 +534,11 @@ pub async fn get_rt_fuzzy(
          * Get the default route table for this VPC.
          */
         vec![
-            aws_sdk_ec2::model::Filter::builder()
+            aws_sdk_ec2::types::Filter::builder()
                 .name("vpc-id")
                 .values(lookuparg)
                 .build(),
-            aws_sdk_ec2::model::Filter::builder()
+            aws_sdk_ec2::types::Filter::builder()
                 .name("association.main")
                 .values("true")
                 .build(),
@@ -549,12 +549,12 @@ pub async fn get_rt_fuzzy(
          * there is not, the default route table for the VPC applies, but for
          * now we are not looking for that here.
          */
-        vec![aws_sdk_ec2::model::Filter::builder()
+        vec![aws_sdk_ec2::types::Filter::builder()
             .name("association.subnet-id")
             .values(lookuparg)
             .build()]
     } else {
-        vec![aws_sdk_ec2::model::Filter::builder()
+        vec![aws_sdk_ec2::types::Filter::builder()
             .name("tag:Name")
             .values(lookuparg)
             .build()]
@@ -574,10 +574,10 @@ pub async fn get_rt_fuzzy(
 pub async fn filter_vpc_fuzzy(
     s: &Stuff,
     optarg: Option<String>,
-) -> Result<Option<Vec<aws_sdk_ec2::model::Filter>>> {
+) -> Result<Option<Vec<aws_sdk_ec2::types::Filter>>> {
     if let Some(optarg) = optarg.as_deref() {
         let vpc = get_vpc_fuzzy(s, optarg).await?;
-        Ok(Some(vec![aws_sdk_ec2::model::Filter::builder()
+        Ok(Some(vec![aws_sdk_ec2::types::Filter::builder()
             .name("vpc-id")
             .values(vpc.vpc_id.unwrap())
             .build()]))
@@ -610,7 +610,7 @@ pub async fn i_upload_snapshot(
         .start_snapshot()
         .volume_size(gb_sz.try_into().unwrap())
         .tags(
-            aws_sdk_ebs::model::Tag::builder()
+            aws_sdk_ebs::types::Tag::builder()
                 .key("Name")
                 .value(name)
                 .build(),
@@ -666,7 +666,7 @@ pub async fn i_upload_snapshot(
                         .block_data(ub.block_data.into())
                         .data_length(CHUNKSZ.try_into().unwrap())
                         .checksum_algorithm(
-                            aws_sdk_ebs::model::ChecksumAlgorithm::
+                            aws_sdk_ebs::types::ChecksumAlgorithm::
                             ChecksumAlgorithmSha256,
                         )
                         .checksum(ub.sha256)
@@ -822,7 +822,7 @@ pub async fn i_upload_snapshot(
             .await?;
 
         if let Some(snap) = res.snapshots().unwrap_or_default().first() {
-            use aws_sdk_ec2::model::SnapshotState as St;
+            use aws_sdk_ec2::types::SnapshotState as St;
 
             match snap.state() {
                 Some(St::Completed) => return Ok(id),

@@ -733,7 +733,7 @@ async fn volumes(mut l: Level<Stuff>) -> Result<()> {
         .ec2()
         .describe_volumes()
         .filters(
-            aws_sdk_ec2::model::Filter::builder()
+            aws_sdk_ec2::types::Filter::builder()
                 .name("attachment.instance-id")
                 .values(&i.id)
                 .build(),

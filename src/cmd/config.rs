@@ -113,7 +113,7 @@ async fn do_rename(mut l: Level<Stuff>) -> Result<()> {
         .create_tags()
         .resources(a.args().get(0).unwrap())
         .tags(
-            aws_sdk_ec2::model::Tag::builder()
+            aws_sdk_ec2::types::Tag::builder()
                 .key("Name")
                 .value(a.args().get(1).unwrap())
                 .build(),

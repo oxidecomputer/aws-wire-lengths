@@ -1,5 +1,7 @@
 use crate::prelude::*;
 
+use aws_sdk_ec2::operation::{create_route, describe_route_tables};
+
 pub async fn do_route(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list route tables", cmd!(list))?;
     l.cmd("show", "show the contents of a route table", cmd!(show))?;
@@ -38,10 +40,10 @@ async fn table_create(mut l: Level<Stuff>) -> Result<()> {
         .ec2()
         .create_route_table()
         .tag_specifications(
-            aws_sdk_ec2::model::TagSpecification::builder()
-                .resource_type(aws_sdk_ec2::model::ResourceType::RouteTable)
+            aws_sdk_ec2::types::TagSpecification::builder()
+                .resource_type(aws_sdk_ec2::types::ResourceType::RouteTable)
                 .tags(
-                    aws_sdk_ec2::model::Tag::builder()
+                    aws_sdk_ec2::types::Tag::builder()
                         .key("Name")
                         .value(&name)
                         .build(),
@@ -269,14 +271,14 @@ trait CreateRouteExt {
     fn to_target(
         self,
         t: &Target,
-    ) -> Result<aws_sdk_ec2::client::fluent_builders::CreateRoute>;
+    ) -> Result<create_route::builders::CreateRouteFluentBuilder>;
 }
 
-impl CreateRouteExt for aws_sdk_ec2::client::fluent_builders::CreateRoute {
+impl CreateRouteExt for create_route::builders::CreateRouteFluentBuilder {
     fn to_target(
         self,
         t: &Target,
-    ) -> Result<aws_sdk_ec2::client::fluent_builders::CreateRoute> {
+    ) -> Result<create_route::builders::CreateRouteFluentBuilder> {
         match t {
             Target::Instance { id, .. } => Ok(self.instance_id(id)),
             Target::Internet { id } => Ok(self.gateway_id(id)),
@@ -290,7 +292,7 @@ trait RouteExt {
     fn target(&self) -> Result<Target>;
 }
 
-impl RouteExt for aws_sdk_ec2::model::Route {
+impl RouteExt for aws_sdk_ec2::types::Route {
     fn target(&self) -> Result<Target> {
         if let Some(iid) = &self.instance_id {
             if let Some(nid) = &self.network_interface_id {
@@ -375,7 +377,7 @@ async fn show(mut l: Level<Stuff>) -> Result<()> {
     for rt in routes.iter() {
         let target = rt.target()?;
 
-        use aws_sdk_ec2::model::RouteState;
+        use aws_sdk_ec2::types::RouteState;
         let flags = [
             matches!(&rt.state, Some(RouteState::Active)).as_flag("A"),
             matches!(&rt.state, Some(RouteState::Blackhole)).as_flag("B"),
@@ -409,7 +411,7 @@ async fn show(mut l: Level<Stuff>) -> Result<()> {
 }
 
 fn find_association(
-    drto: aws_sdk_ec2::output::DescribeRouteTablesOutput,
+    drto: describe_route_tables::DescribeRouteTablesOutput,
     subnet_id: &str,
 ) -> Option<String> {
     if let Some(rtables) = drto.route_tables {
@@ -462,13 +464,13 @@ async fn associate(mut l: Level<Stuff>) -> Result<()> {
         .ec2()
         .describe_route_tables()
         .filters(
-            aws_sdk_ec2::model::Filter::builder()
+            aws_sdk_ec2::types::Filter::builder()
                 .name("vpc-id")
                 .values(net.vpc_id().unwrap())
                 .build(),
         )
         .filters(
-            aws_sdk_ec2::model::Filter::builder()
+            aws_sdk_ec2::types::Filter::builder()
                 .name("association.subnet-id")
                 .values(net.subnet_id().unwrap())
                 .build(),
