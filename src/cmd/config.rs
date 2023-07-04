@@ -37,12 +37,7 @@ async fn do_serial_disable(mut l: Level<Stuff>) -> Result<()> {
     no_args!(l);
     let s = l.context();
 
-    let res = s
-        .ec2()
-        .disable_serial_console_access(
-            ec2::DisableSerialConsoleAccessRequest::default(),
-        )
-        .await?;
+    let res = s.ec2().disable_serial_console_access().send().await?;
 
     if res
         .serial_console_access_enabled
@@ -58,12 +53,7 @@ async fn do_serial_enable(mut l: Level<Stuff>) -> Result<()> {
     no_args!(l);
     let s = l.context();
 
-    let res = s
-        .ec2()
-        .enable_serial_console_access(
-            ec2::EnableSerialConsoleAccessRequest::default(),
-        )
-        .await?;
+    let res = s.ec2().enable_serial_console_access().send().await?;
 
     if !res
         .serial_console_access_enabled
@@ -79,12 +69,7 @@ async fn do_serial_get(mut l: Level<Stuff>) -> Result<()> {
     no_args!(l);
     let s = l.context();
 
-    let res = s
-        .ec2()
-        .get_serial_console_access_status(
-            ec2::GetSerialConsoleAccessStatusRequest::default(),
-        )
-        .await?;
+    let res = s.ec2().get_serial_console_access_status().send().await?;
 
     if res
         .serial_console_access_enabled
@@ -108,8 +93,7 @@ async fn do_rename(mut l: Level<Stuff>) -> Result<()> {
         bad_args!(l, "specify resource ID and new name");
     }
 
-    s.more()
-        .ec2()
+    s.ec2()
         .create_tags()
         .resources(a.args().get(0).unwrap())
         .tags(

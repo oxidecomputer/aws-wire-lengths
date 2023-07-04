@@ -10,7 +10,7 @@ async fn do_bucket_ls(mut l: Level<Stuff>) -> Result<()> {
     let mut t = a.table();
     let s = l.context();
 
-    let res = s.more().s3().list_buckets().send().await?;
+    let res = s.s3().list_buckets().send().await?;
 
     for b in res.buckets().unwrap_or_default() {
         let mut r = Row::default();
@@ -47,7 +47,6 @@ async fn do_bucket_create(mut l: Level<Stuff>) -> Result<()> {
     let bucket = a.args().get(0).unwrap();
 
     let res = s
-        .more()
         .s3()
         .create_bucket()
         .object_ownership(
@@ -57,7 +56,7 @@ async fn do_bucket_create(mut l: Level<Stuff>) -> Result<()> {
             aws_sdk_s3::types::CreateBucketConfiguration::builder()
                 .location_constraint(
                     aws_sdk_s3::types::BucketLocationConstraint::from(
-                        s.more().region_s3().to_string().as_str(),
+                        s.region_s3().to_string().as_str(),
                     ),
                 )
                 .build(),
@@ -84,14 +83,7 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
 
     let bucket = a.args().get(0).unwrap();
 
-    match s
-        .more()
-        .s3()
-        .get_public_access_block()
-        .bucket(bucket)
-        .send()
-        .await
-    {
+    match s.s3().get_public_access_block().bucket(bucket).send().await {
         Ok(res) => match res.public_access_block_configuration() {
             Some(v) => {
                 println!("public access block: {:#?}", v);
@@ -109,14 +101,7 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
         }
     };
 
-    match s
-        .more()
-        .s3()
-        .get_bucket_policy()
-        .bucket(bucket)
-        .send()
-        .await
-    {
+    match s.s3().get_bucket_policy().bucket(bucket).send().await {
         Ok(res) => match res.policy {
             Some(policy) => {
                 /*
@@ -138,7 +123,6 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
     };
 
     match s
-        .more()
         .s3()
         .get_bucket_policy_status()
         .bucket(bucket)
@@ -161,17 +145,10 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
         }
     };
 
-    let res = s
-        .more()
-        .s3()
-        .get_bucket_versioning()
-        .bucket(bucket)
-        .send()
-        .await?;
+    let res = s.s3().get_bucket_versioning().bucket(bucket).send().await?;
     println!("versioning: {:#?}", res);
 
     match s
-        .more()
         .s3()
         .get_bucket_ownership_controls()
         .bucket(bucket)
@@ -217,7 +194,6 @@ async fn do_object_tree(mut l: Level<Stuff>) -> Result<()> {
     let ncdu = a.opts().opt_present("N");
 
     let mut list = s
-        .more()
         .s3()
         .list_objects_v2()
         .bucket(&bucket)
@@ -337,7 +313,6 @@ async fn do_object_ls(mut l: Level<Stuff>) -> Result<()> {
     let prefix = a.args().get(1).cloned();
 
     let mut list = s
-        .more()
         .s3()
         .list_objects_v2()
         .bucket(bucket)
@@ -382,7 +357,6 @@ async fn do_object_info(mut l: Level<Stuff>) -> Result<()> {
     let key = a.args()[1].clone();
 
     let res = s
-        .more()
         .s3()
         .head_object()
         .bucket(&bucket)
@@ -393,7 +367,6 @@ async fn do_object_info(mut l: Level<Stuff>) -> Result<()> {
     println!("{:#?}", res);
 
     let res = s
-        .more()
         .s3()
         .get_object_acl()
         .bucket(&bucket)
@@ -419,14 +392,7 @@ async fn do_object_get(mut l: Level<Stuff>) -> Result<()> {
     let bucket = a.args()[0].clone();
     let key = a.args()[1].clone();
 
-    let mut res = s
-        .more()
-        .s3()
-        .get_object()
-        .bucket(bucket)
-        .key(key)
-        .send()
-        .await?;
+    let mut res = s.s3().get_object().bucket(bucket).key(key).send().await?;
 
     let out = std::io::stdout();
     let mut out = out.lock();
@@ -453,7 +419,6 @@ async fn do_presign_get(mut l: Level<Stuff>) -> Result<()> {
     let key = a.args()[1].clone();
 
     let res = s
-        .more()
         .s3()
         .get_object()
         .bucket(bucket)
@@ -482,8 +447,7 @@ async fn do_object_rm(mut l: Level<Stuff>) -> Result<()> {
     let bucket = a.args()[0].clone();
     let key = a.args()[1].clone();
 
-    s.more()
-        .s3()
+    s.s3()
         .delete_object()
         .bucket(bucket)
         .key(key)
@@ -557,7 +521,6 @@ async fn do_object_put(mut l: Level<Stuff>) -> Result<()> {
     };
 
     let res = s
-        .more()
         .s3()
         .put_object()
         .bucket(bucket)

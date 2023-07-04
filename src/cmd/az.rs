@@ -1,5 +1,7 @@
 use crate::prelude::*;
 
+use aws_sdk_ec2::types::AvailabilityZoneState;
+
 pub async fn do_az(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list availability zones", cmd!(do_az_ls))?;
 
@@ -20,13 +22,12 @@ pub async fn do_az_ls(mut l: Level<Stuff>) -> Result<()> {
 
     let res = s
         .ec2()
-        .describe_availability_zones(ec2::DescribeAvailabilityZonesRequest {
-            all_availability_zones: Some(a.opts().opt_present("all")),
-            ..Default::default()
-        })
+        .describe_availability_zones()
+        .all_availability_zones(a.opts().opt_present("all"))
+        .send()
         .await?;
 
-    for az in res.availability_zones.unwrap_or_default() {
+    for az in res.availability_zones().unwrap_or_default() {
         let mut r = Row::default();
 
         r.add_stror("name", &az.zone_name, "?");
@@ -40,7 +41,18 @@ pub async fn do_az_ls(mut l: Level<Stuff>) -> Result<()> {
                 None => "-",
             },
         );
-        r.add_stror("state", &az.state, "-");
+
+        let state = az.state.as_ref().map(|st| {
+            match st {
+                AvailabilityZoneState::Available => "available",
+                AvailabilityZoneState::Impaired => "impaired",
+                AvailabilityZoneState::Information => "information",
+                AvailabilityZoneState::Unavailable => "unavailable",
+                _ => "unknown",
+            }
+            .to_string()
+        });
+        r.add_stror("state", &state, "-");
         r.add_stror("group", &az.network_border_group, "-");
 
         t.add_row(r);

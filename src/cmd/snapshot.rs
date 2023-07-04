@@ -38,7 +38,6 @@ async fn do_snapshot_rm(mut l: Level<Stuff>) -> Result<()> {
 
     for id in a.args() {
         l.context()
-            .more()
             .ec2()
             .delete_snapshot()
             .dry_run(dry_run)
@@ -76,7 +75,6 @@ async fn snapshots(mut l: Level<Stuff>) -> Result<()> {
     };
 
     let res = s
-        .more()
         .ec2()
         .describe_snapshots()
         .owner_ids("self")

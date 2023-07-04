@@ -2,9 +2,6 @@ use anyhow::{bail, Result};
 use base64::Engine;
 use chrono::prelude::*;
 use hiercmd::prelude::*;
-use rand::distributions::Alphanumeric;
-use rand::{thread_rng, Rng};
-use rusoto_ec2::Tag;
 
 pub const WIDTH_PCX: usize = 21;
 pub const WIDTH_VPC: usize = 21;
@@ -83,35 +80,6 @@ impl TagExtractor for Option<Vec<aws_sdk_ec2::types::Tag>> {
 
         None
     }
-}
-
-impl TagExtractor for Option<Vec<Tag>> {
-    fn tag(&self, n: &str) -> Option<String> {
-        if let Some(tags) = self.as_ref() {
-            for tag in tags.iter() {
-                if let Some(k) = tag.key.as_deref() {
-                    if k == n {
-                        return tag.value.clone();
-                    }
-                }
-            }
-        }
-
-        None
-    }
-}
-
-pub fn ss(s: &str) -> Option<String> {
-    Some(s.to_string())
-}
-
-#[allow(dead_code)]
-pub fn genkey(len: usize) -> String {
-    thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(len)
-        .map(|c| c as char)
-        .collect()
 }
 
 pub fn one_ping_only<T>(

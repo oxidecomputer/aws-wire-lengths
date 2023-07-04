@@ -36,7 +36,6 @@ async fn table_create(mut l: Level<Stuff>) -> Result<()> {
     let vpc = get_vpc_fuzzy(s, &a.opts().opt_str("vpc").unwrap()).await?;
 
     let res = s
-        .more()
         .ec2()
         .create_route_table()
         .tag_specifications(
@@ -71,8 +70,7 @@ async fn table_destroy(mut l: Level<Stuff>) -> Result<()> {
 
     let rt = get_rt_fuzzy(s, &name, true).await?;
 
-    s.more()
-        .ec2()
+    s.ec2()
         .delete_route_table()
         .route_table_id(rt.route_table_id().unwrap())
         .send()
@@ -140,7 +138,6 @@ async fn route_create(mut l: Level<Stuff>) -> Result<()> {
     };
 
     let res = s
-        .more()
         .ec2()
         .create_route()
         .destination_cidr_block(cidr)
@@ -166,8 +163,7 @@ async fn route_delete(mut l: Level<Stuff>) -> Result<()> {
 
     let rt = get_rt_fuzzy(s, a.args().get(0).unwrap(), true).await?;
 
-    s.more()
-        .ec2()
+    s.ec2()
         .delete_route()
         .route_table_id(rt.route_table_id().unwrap())
         .destination_cidr_block(a.args().get(1).unwrap())
@@ -205,7 +201,6 @@ async fn list(mut l: Level<Stuff>) -> Result<()> {
     let filters = filter_vpc_fuzzy(s, a.opts().opt_str("vpc")).await?;
 
     let res = s
-        .more()
         .ec2()
         .describe_route_tables()
         .set_filters(filters)
@@ -460,7 +455,6 @@ async fn associate(mut l: Level<Stuff>) -> Result<()> {
      * Look for an existing association ID for this subnet:
      */
     let direct = s
-        .more()
         .ec2()
         .describe_route_tables()
         .filters(
@@ -482,7 +476,6 @@ async fn associate(mut l: Level<Stuff>) -> Result<()> {
         eprintln!("found existing association ID {}", assoc);
 
         let res = s
-            .more()
             .ec2()
             .replace_route_table_association()
             .association_id(assoc)
@@ -494,7 +487,6 @@ async fn associate(mut l: Level<Stuff>) -> Result<()> {
         eprintln!("no existing association ID found");
 
         let res = s
-            .more()
             .ec2()
             .associate_route_table()
             .subnet_id(id)

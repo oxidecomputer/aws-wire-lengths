@@ -39,10 +39,10 @@ async fn do_image_rm(mut l: Level<Stuff>) -> Result<()> {
     for id in a.args() {
         l.context()
             .ec2()
-            .deregister_image(ec2::DeregisterImageRequest {
-                dry_run: Some(dry_run),
-                image_id: id.to_string(),
-            })
+            .deregister_image()
+            .dry_run(dry_run)
+            .image_id(id)
+            .send()
             .await?;
         if dry_run {
             println!("would delete {}", id);
@@ -58,7 +58,7 @@ async fn image_grant(mut l: Level<Stuff>) -> Result<()> {
     l.usage_args(Some("AMI-ID|NAME ACCOUNT"));
 
     let a = args!(l);
-    let c = l.context().more().ec2();
+    let c = l.context().ec2();
 
     if a.args().len() != 2 {
         bad_args!(l, "specify image ID or name, and the account to allow");
@@ -91,7 +91,7 @@ async fn image_revoke(mut l: Level<Stuff>) -> Result<()> {
     l.usage_args(Some("AMI-ID|NAME ACCOUNT"));
 
     let a = args!(l);
-    let c = l.context().more().ec2();
+    let c = l.context().ec2();
 
     if a.args().len() != 2 {
         bad_args!(l, "specify image ID or name, and the account to disallow");
@@ -135,16 +135,12 @@ async fn do_image_copy(mut l: Level<Stuff>) -> Result<()> {
     let image = get_image_fuzzy(l.context(), a.args()[0].as_str()).await?;
     eprintln!("image = {}", image.image_id().unwrap());
 
-    let target = l
-        .context()
-        .more()
-        .ec2_for_region(a.args()[1].as_str())
-        .await;
+    let target = l.context().ec2_for_region(a.args()[1].as_str()).await;
     let res = target
         .copy_image()
         .name(image.name().unwrap())
         .source_image_id(image.image_id().unwrap())
-        .source_region(l.context().more().region_ec2().to_string())
+        .source_region(l.context().region_ec2().to_string())
         .send()
         .await?;
 
@@ -212,7 +208,7 @@ async fn image_dump(mut l: Level<Stuff>) -> Result<()> {
     l.usage_args(Some("AMI-ID|NAME"));
 
     let a = args!(l);
-    let c = l.context().more().ec2();
+    let c = l.context().ec2();
 
     if a.args().len() != 1 {
         bad_args!(l, "specify image ID or name");
@@ -246,16 +242,9 @@ async fn images(mut l: Level<Stuff>) -> Result<()> {
     let mut t = a.table();
     let s = l.context();
 
-    let res = s
-        .ec2()
-        .describe_images(ec2::DescribeImagesRequest {
-            owners: Some(vec!["self".to_string()]),
-            ..Default::default()
-        })
-        .await?;
+    let res = s.ec2().describe_images().owners("self").send().await?;
 
-    let x = Vec::new();
-    for i in res.images.as_ref().unwrap_or(&x) {
+    for i in res.images.unwrap_or_default() {
         let mut r = Row::default();
 
         /*

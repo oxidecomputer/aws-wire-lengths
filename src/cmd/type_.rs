@@ -56,7 +56,6 @@ async fn do_type_ls(mut l: Level<Stuff>) -> Result<()> {
     }
 
     let mut list = s
-        .more()
         .ec2()
         .describe_instance_types()
         .set_filters(Some(filters.clone()))

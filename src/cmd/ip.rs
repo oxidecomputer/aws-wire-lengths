@@ -29,7 +29,6 @@ async fn create(mut l: Level<Stuff>) -> Result<()> {
     }
 
     let res = s
-        .more()
         .ec2()
         .allocate_address()
         .domain(aws_sdk_ec2::types::DomainType::Vpc)
@@ -63,8 +62,7 @@ async fn destroy(mut l: Level<Stuff>) -> Result<()> {
 
     let eip = get_ip_fuzzy(s, a.args().get(0).as_ref().unwrap()).await?;
 
-    s.more()
-        .ec2()
+    s.ec2()
         .release_address()
         .set_allocation_id(eip.allocation_id)
         .send()
@@ -88,8 +86,7 @@ async fn attach(mut l: Level<Stuff>) -> Result<()> {
     let eip = get_ip_fuzzy(s, a.args().get(0).as_ref().unwrap()).await?;
     let inst = get_instance_fuzzy(s, a.args().get(1).as_ref().unwrap()).await?;
 
-    s.more()
-        .ec2()
+    s.ec2()
         .associate_address()
         .set_allocation_id(eip.allocation_id)
         .instance_id(inst.id)
@@ -113,8 +110,7 @@ async fn detach(mut l: Level<Stuff>) -> Result<()> {
     let eip = get_ip_fuzzy(s, a.args().get(0).as_ref().unwrap()).await?;
 
     if let Some(assoc) = eip.association_id() {
-        s.more()
-            .ec2()
+        s.ec2()
             .disassociate_address()
             .association_id(assoc)
             .send()
@@ -133,7 +129,7 @@ async fn list(mut l: Level<Stuff>) -> Result<()> {
     let s = l.context();
     let mut t = a.table();
 
-    let res = s.more().ec2().describe_addresses().send().await?;
+    let res = s.ec2().describe_addresses().send().await?;
 
     for addr in res.addresses().unwrap_or_default().iter() {
         let n = addr.tags.tag("Name");

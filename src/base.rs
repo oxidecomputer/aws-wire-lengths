@@ -3,13 +3,12 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 
 use anyhow::{bail, Result};
-use rusoto_ec2 as ec2;
-use sha2::Digest;
-
-use ec2::{
-    BlockDeviceMapping, DeleteVolumeRequest, DescribeImagesRequest,
-    DescribeSnapshotsRequest, EbsBlockDevice, RegisterImageRequest, Tag,
+use aws_sdk_ebs::primitives::DateTimeFormat;
+use aws_sdk_ec2::types::{
+    ArchitectureValues, AttributeBooleanValue, BlockDeviceMapping,
+    EbsBlockDevice, Filter, InstanceStateName, SecurityGroup, Tag, VolumeType,
 };
+use sha2::Digest;
 
 use crate::util::*;
 use crate::Stuff;
@@ -19,7 +18,7 @@ pub struct Instance {
     pub name: Option<String>,
     pub id: String,
     pub ip: Option<String>,
-    pub state: String,
+    pub state: InstanceStateName,
     pub launch: String,
     pub tags: Vec<Tag>,
     pub nics: Vec<String>,
@@ -38,37 +37,37 @@ pub async fn start_instance(s: &Stuff, id: &str) -> Result<()> {
     println!("starting instance {}...", id);
 
     let mut started = false;
-    let mut last_state = String::new();
+    let mut last_state = None;
 
     loop {
         let inst = get_instance(s, lookup.clone()).await?;
 
-        let shouldstart = match inst.state.as_str() {
-            "terminated" => {
+        let new_state = if let Some(last_state) = &last_state {
+            last_state != &inst.state
+        } else {
+            true
+        };
+
+        if new_state {
+            println!("    state is {}", inst.state.as_str());
+            last_state = Some(inst.state.clone());
+        }
+
+        let shouldstart = match &inst.state {
+            InstanceStateName::Terminated => {
                 bail!("cannot start a terminated instance?");
             }
-            n @ "running" => {
-                println!("    state is {}; done!", n);
+            n @ InstanceStateName::Running => {
+                println!("    state is {}; done!", n.as_str());
                 return Ok(());
             }
-            n => {
-                if last_state != n {
-                    println!("    state is {}", n);
-                    last_state = n.to_string();
-                }
-                n == "stopped"
-            }
+            InstanceStateName::Stopped => true,
+            _ => false,
         };
 
         if shouldstart && !started {
             println!("    starting...");
-            let res = s
-                .ec2()
-                .start_instances(ec2::StartInstancesRequest {
-                    instance_ids: vec![id.to_string()],
-                    ..Default::default()
-                })
-                .await?;
+            let res = s.ec2().start_instances().instance_ids(id).send().await?;
             println!("    {:#?}", res);
             started = true;
         }
@@ -85,34 +84,39 @@ pub async fn stop_instance(s: &Stuff, id: &str, force: bool) -> Result<()> {
     println!("{}stopping instance {}...", pfx, id);
 
     let mut stopped = false;
-    let mut last_state = String::new();
+    let mut last_state = None;
 
     loop {
         let inst = get_instance(s, lookup.clone()).await?;
 
-        let shouldstop = match inst.state.as_str() {
-            n @ "stopped" => {
-                println!("    state is {}; done!", n);
+        let new_state = if let Some(last_state) = &last_state {
+            last_state != &inst.state
+        } else {
+            true
+        };
+
+        if new_state {
+            println!("    state is {}", inst.state.as_str());
+            last_state = Some(inst.state.clone());
+        }
+
+        let shouldstop = match &inst.state {
+            n @ InstanceStateName::Stopped => {
+                println!("    state is {}; done!", n.as_str());
                 return Ok(());
             }
-            n => {
-                if last_state != n {
-                    println!("    state is {}", n);
-                    last_state = n.to_string();
-                }
-                n == "running"
-            }
+            InstanceStateName::Running => true,
+            _ => false,
         };
 
         if (force || shouldstop) && !stopped {
             println!("    {}stopping...", pfx);
             let res = s
                 .ec2()
-                .stop_instances(ec2::StopInstancesRequest {
-                    instance_ids: vec![id.to_string()],
-                    force: Some(force),
-                    ..Default::default()
-                })
+                .stop_instances()
+                .instance_ids(id)
+                .force(force)
+                .send()
                 .await?;
             println!("    {:#?}", res);
             stopped = true;
@@ -128,16 +132,13 @@ pub async fn instance_spoofing(s: &Stuff, id: &str, spoof: bool) -> Result<()> {
     /*
      * If we want to allow spoofing, disable the source/destination check:
      */
-    let source_dest_check = Some(ec2::AttributeBooleanValue {
-        value: Some(!spoof),
-    });
-
     s.ec2()
-        .modify_instance_attribute(ec2::ModifyInstanceAttributeRequest {
-            instance_id: id.to_string(),
-            source_dest_check,
-            ..Default::default()
-        })
+        .modify_instance_attribute()
+        .instance_id(id)
+        .source_dest_check(
+            AttributeBooleanValue::builder().value(!spoof).build(),
+        )
+        .send()
         .await?;
 
     Ok(())
@@ -146,14 +147,13 @@ pub async fn instance_spoofing(s: &Stuff, id: &str, spoof: bool) -> Result<()> {
 pub async fn protect_instance(s: &Stuff, id: &str, prot: bool) -> Result<()> {
     println!("setting protect to {} on instance {}...", prot, id);
 
-    let val = ec2::AttributeBooleanValue { value: Some(prot) };
-
     s.ec2()
-        .modify_instance_attribute(ec2::ModifyInstanceAttributeRequest {
-            instance_id: id.to_string(),
-            disable_api_termination: Some(val),
-            ..Default::default()
-        })
+        .modify_instance_attribute()
+        .instance_id(id)
+        .disable_api_termination(
+            AttributeBooleanValue::builder().value(prot).build(),
+        )
+        .send()
         .await?;
 
     Ok(())
@@ -188,10 +188,9 @@ pub async fn destroy_instance(s: &Stuff, id: &str) -> Result<()> {
             println!("    terminating...");
             let res = s
                 .ec2()
-                .terminate_instances(ec2::TerminateInstancesRequest {
-                    instance_ids: vec![id.to_string()],
-                    ..Default::default()
-                })
+                .terminate_instances()
+                .instance_ids(id)
+                .send()
                 .await?;
             println!("    {:#?}", res);
             terminated = true;
@@ -226,32 +225,30 @@ async fn get_instance_x(
     lookup: InstanceLookup,
     ignoreterm: bool,
 ) -> Result<Instance> {
-    let filters = match &lookup {
-        InstanceLookup::ById(id) => Some(vec![ec2::Filter {
-            name: Some("instance-id".into()),
-            values: Some(vec![id.into()]),
-        }]),
-        InstanceLookup::ByName(name) => Some(vec![ec2::Filter {
-            name: Some("tag:Name".into()),
-            values: Some(vec![name.into()]),
-        }]),
+    let mut req = s.ec2().describe_instances();
+
+    match &lookup {
+        InstanceLookup::ById(id) => {
+            req = req.filters(
+                Filter::builder().name("instance-id").values(id).build(),
+            )
+        }
+        InstanceLookup::ByName(name) => {
+            req = req.filters(
+                Filter::builder().name("tag:Name").values(name).build(),
+            )
+        }
     };
 
-    let res = s
-        .ec2()
-        .describe_instances(ec2::DescribeInstancesRequest {
-            filters,
-            ..Default::default()
-        })
-        .await?;
+    let res = req.send().await?;
 
     let mut out: Vec<Instance> = Vec::new();
 
-    for res in res.reservations.as_ref().unwrap_or(&vec![]).iter() {
-        for inst in res.instances.as_ref().unwrap_or(&vec![]).iter() {
+    for res in res.reservations().unwrap_or_default() {
+        for inst in res.instances().unwrap_or_default() {
             if ignoreterm {
-                let st = inst.state.as_ref().unwrap().name.as_deref().unwrap();
-                if st == "terminated" {
+                let stn = inst.state.as_ref().map(|s| s.name()).flatten();
+                if matches!(stn, Some(InstanceStateName::Terminated)) {
                     continue;
                 }
             }
@@ -290,12 +287,19 @@ async fn get_instance_x(
                     state: inst
                         .state
                         .as_ref()
+                        .map(|s| s.name())
+                        .flatten()
                         .unwrap()
-                        .name
-                        .as_deref()
-                        .unwrap()
-                        .to_string(),
-                    launch: inst.launch_time.as_deref().unwrap().to_string(),
+                        .to_owned(),
+                    launch: inst
+                        .launch_time
+                        .map(|dt| {
+                            /*
+                             * XXX
+                             */
+                            dt.fmt(DateTimeFormat::DateTime).unwrap()
+                        })
+                        .unwrap(),
                     tags: inst
                         .tags
                         .as_ref()
@@ -329,7 +333,6 @@ pub async fn get_vol_fuzzy(
     lookuparg: &str,
 ) -> Result<aws_sdk_ec2::types::Volume> {
     let res = s
-        .more()
         .ec2()
         .describe_volumes()
         .filters(
@@ -353,7 +356,6 @@ pub async fn get_image_fuzzy(
     lookuparg: &str,
 ) -> Result<aws_sdk_ec2::types::Image> {
     let res = s
-        .more()
         .ec2()
         .describe_images()
         .filters(
@@ -377,7 +379,6 @@ pub async fn get_subnet_fuzzy(
     lookuparg: &str,
 ) -> Result<aws_sdk_ec2::types::Subnet> {
     let res = s
-        .more()
         .ec2()
         .describe_subnets()
         .filters(
@@ -401,7 +402,6 @@ pub async fn get_ip_fuzzy(
     lookuparg: &str,
 ) -> Result<aws_sdk_ec2::types::Address> {
     let res = s
-        .more()
         .ec2()
         .describe_addresses()
         .filters(
@@ -425,7 +425,6 @@ pub async fn get_nat_fuzzy(
     lookuparg: &str,
 ) -> Result<aws_sdk_ec2::types::NatGateway> {
     let res = s
-        .more()
         .ec2()
         .describe_nat_gateways()
         .filter(
@@ -449,7 +448,6 @@ pub async fn get_igw_fuzzy(
     lookuparg: &str,
 ) -> Result<aws_sdk_ec2::types::InternetGateway> {
     let res = s
-        .more()
         .ec2()
         .describe_internet_gateways()
         .filters(
@@ -473,7 +471,6 @@ pub async fn get_vpc_fuzzy(
     lookuparg: &str,
 ) -> Result<aws_sdk_ec2::types::Vpc> {
     let res = s
-        .more()
         .ec2()
         .describe_vpcs()
         .filters(
@@ -492,28 +489,21 @@ pub async fn get_vpc_fuzzy(
     one_ping_only("VPC", lookuparg, res.vpcs)
 }
 
-pub async fn get_sg_fuzzy(
-    s: &Stuff,
-    lookuparg: &str,
-) -> Result<ec2::SecurityGroup> {
-    let filters = Some(if lookuparg.starts_with("sg-") {
-        vec![ec2::Filter {
-            name: ss("group-id"),
-            values: Some(vec![lookuparg.into()]),
-        }]
-    } else {
-        vec![ec2::Filter {
-            name: ss("group-name"),
-            values: Some(vec![lookuparg.into()]),
-        }]
-    });
-
+pub async fn get_sg_fuzzy(s: &Stuff, lookuparg: &str) -> Result<SecurityGroup> {
     let res = s
         .ec2()
-        .describe_security_groups(ec2::DescribeSecurityGroupsRequest {
-            filters,
-            ..Default::default()
-        })
+        .describe_security_groups()
+        .filters(
+            aws_sdk_ec2::types::Filter::builder()
+                .name(if lookuparg.starts_with("sg-") {
+                    "group-id"
+                } else {
+                    "group-name"
+                })
+                .values(lookuparg)
+                .build(),
+        )
+        .send()
         .await?;
 
     one_ping_only("security group", lookuparg, res.security_groups)
@@ -561,7 +551,6 @@ pub async fn get_rt_fuzzy(
     });
 
     let res = s
-        .more()
         .ec2()
         .describe_route_tables()
         .set_filters(filters)
@@ -605,7 +594,6 @@ pub async fn i_upload_snapshot(
     let gb_sz = (byte_sz + (1 << 30) - 1) / (1 << 30);
 
     let res = s
-        .more()
         .ebs()
         .start_snapshot()
         .volume_size(gb_sz.try_into().unwrap())
@@ -644,7 +632,7 @@ pub async fn i_upload_snapshot(
      * Create worker tasks.
      */
     for _ in 0..20 {
-        let ebs = s.more().ebs().clone();
+        let ebs = s.ebs().clone();
         let rx = Arc::clone(&rx);
         let id = id.clone();
         handles.push(tokio::spawn(async move {
@@ -799,7 +787,6 @@ pub async fn i_upload_snapshot(
     let nblocks = *nblocks.lock().await;
     println!("changed block count = {}", nblocks);
     let res = s
-        .more()
         .ebs()
         .complete_snapshot()
         .snapshot_id(&id)
@@ -814,7 +801,6 @@ pub async fn i_upload_snapshot(
     println!("waiting for snapshot to be ready...");
     loop {
         let res = s
-            .more()
             .ec2()
             .describe_snapshots()
             .snapshot_ids(&id)
@@ -847,55 +833,57 @@ pub async fn i_register_image(
 ) -> Result<String> {
     let res = s
         .ec2()
-        .describe_snapshots(DescribeSnapshotsRequest {
-            snapshot_ids: Some(vec![snapid.to_string()]),
-            ..Default::default()
-        })
+        .describe_snapshots()
+        .snapshot_ids(snapid)
+        .send()
         .await?;
     let snap = res.snapshots.unwrap().get(0).unwrap().clone();
 
     let res = s
         .ec2()
-        .register_image(RegisterImageRequest {
-            name: name.to_string(),
-            root_device_name: ss("/dev/sda1"),
-            virtualization_type: ss("hvm"),
-            architecture: ss("x86_64"),
-            ena_support: Some(ena),
-            block_device_mappings: Some(vec![
-                BlockDeviceMapping {
-                    device_name: ss("/dev/sda1"), /* XXX? */
-                    ebs: Some(EbsBlockDevice {
-                        snapshot_id: Some(snapid.to_string()),
-                        volume_type: ss("gp2"), /* XXX? */
-                        volume_size: snap.volume_size,
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                },
-                BlockDeviceMapping {
-                    device_name: ss("/dev/sdb"),    /* XXX? */
-                    virtual_name: ss("ephemeral0"), /* XXX? */
-                    ..Default::default()
-                },
-                BlockDeviceMapping {
-                    device_name: ss("/dev/sdc"),    /* XXX? */
-                    virtual_name: ss("ephemeral1"), /* XXX? */
-                    ..Default::default()
-                },
-                BlockDeviceMapping {
-                    device_name: ss("/dev/sdd"),    /* XXX? */
-                    virtual_name: ss("ephemeral2"), /* XXX? */
-                    ..Default::default()
-                },
-                BlockDeviceMapping {
-                    device_name: ss("/dev/sde"),    /* XXX? */
-                    virtual_name: ss("ephemeral3"), /* XXX? */
-                    ..Default::default()
-                },
-            ]),
-            ..Default::default()
-        })
+        .register_image()
+        .name(name)
+        .root_device_name("/dev/sda1")
+        .virtualization_type("hvm")
+        .architecture(ArchitectureValues::X8664)
+        .ena_support(ena)
+        .block_device_mappings(
+            BlockDeviceMapping::builder()
+                .device_name("/dev/sda1")
+                .ebs(
+                    EbsBlockDevice::builder()
+                        .snapshot_id(snapid)
+                        .volume_type(VolumeType::Gp2) /* XXX? */
+                        .volume_size(snap.volume_size().unwrap())
+                        .build(),
+                )
+                .build(),
+        )
+        .block_device_mappings(
+            BlockDeviceMapping::builder()
+                .device_name("/dev/sdb") /* XXX? */
+                .virtual_name("ephemeral0") /* XXX? */
+                .build(),
+        )
+        .block_device_mappings(
+            BlockDeviceMapping::builder()
+                .device_name("/dev/sdc") /* XXX? */
+                .virtual_name("ephemeral1") /* XXX? */
+                .build(),
+        )
+        .block_device_mappings(
+            BlockDeviceMapping::builder()
+                .device_name("/dev/sdd") /* XXX? */
+                .virtual_name("ephemeral2") /* XXX? */
+                .build(),
+        )
+        .block_device_mappings(
+            BlockDeviceMapping::builder()
+                .device_name("/dev/sde") /* XXX? */
+                .virtual_name("ephemeral3") /* XXX? */
+                .build(),
+        )
+        .send()
         .await?;
 
     println!("res: {:#?}", res);
@@ -904,13 +892,7 @@ pub async fn i_register_image(
     println!("IMAGE ID: {}", snapid);
 
     loop {
-        let res = s
-            .ec2()
-            .describe_images(DescribeImagesRequest {
-                image_ids: Some(vec![imageid.to_string()]),
-                ..Default::default()
-            })
-            .await?;
+        let res = s.ec2().describe_images().image_ids(&imageid).send().await?;
 
         let images = res.images.as_ref().unwrap();
 
@@ -923,7 +905,7 @@ pub async fn i_register_image(
 
         println!("image state: {:#?}", image);
 
-        if image.state.as_deref().unwrap() == "available" {
+        if image.state.as_ref().map(|s| s.as_str()) == Some("available") {
             return Ok(imageid);
         }
 
@@ -933,10 +915,11 @@ pub async fn i_register_image(
 
 pub async fn i_volume_rm(s: &Stuff, volid: &str, dry_run: bool) -> Result<()> {
     s.ec2()
-        .delete_volume(DeleteVolumeRequest {
-            dry_run: Some(dry_run),
-            volume_id: volid.to_string(),
-        })
+        .delete_volume()
+        .dry_run(dry_run)
+        .volume_id(volid)
+        .send()
         .await?;
+
     Ok(())
 }

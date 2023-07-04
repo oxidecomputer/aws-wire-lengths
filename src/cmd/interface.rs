@@ -16,7 +16,7 @@ async fn list(mut l: Level<Stuff>) -> Result<()> {
     let s = l.context();
     let mut t = a.table();
 
-    let res = s.more().ec2().describe_network_interfaces().send().await?;
+    let res = s.ec2().describe_network_interfaces().send().await?;
 
     for ni in res.network_interfaces().unwrap_or_default().iter() {
         let n = ni.tag_set.tag("Name");

@@ -354,7 +354,6 @@ async fn do_sg_ls(mut l: Level<Stuff>) -> Result<()> {
     let filters = filter_vpc_fuzzy(s, a.opts().opt_str("vpc")).await?;
 
     let res = s
-        .more()
         .ec2()
         .describe_security_groups()
         .set_filters(filters)
@@ -406,7 +405,6 @@ async fn create(mut l: Level<Stuff>) -> Result<()> {
     let vpc = get_vpc_fuzzy(s, &a.opts().opt_str("vpc").unwrap()).await?;
 
     let res = s
-        .more()
         .ec2()
         .create_security_group()
         .group_name(name)
@@ -431,8 +429,7 @@ async fn destroy(mut l: Level<Stuff>) -> Result<()> {
 
     let sg = get_sg_fuzzy(s, a.args().get(0).unwrap()).await?;
 
-    s.more()
-        .ec2()
+    s.ec2()
         .delete_security_group()
         .group_id(sg.group_id.unwrap())
         .send()
@@ -470,7 +467,6 @@ async fn apply(mut l: Level<Stuff>) -> Result<()> {
      * Get the list of existing rules and turn them into our parsed format.
      */
     let res = s
-        .more()
         .ec2()
         .describe_security_group_rules()
         .filters(
@@ -549,8 +545,7 @@ async fn apply(mut l: Level<Stuff>) -> Result<()> {
         println!("- {}", remote.info());
         match &remote.dir {
             RuleDirection::In => {
-                s.more()
-                    .ec2()
+                s.ec2()
                     .revoke_security_group_ingress()
                     .group_id(&id)
                     .security_group_rule_ids(ruleid)
@@ -558,8 +553,7 @@ async fn apply(mut l: Level<Stuff>) -> Result<()> {
                     .await?;
             }
             RuleDirection::Out => {
-                s.more()
-                    .ec2()
+                s.ec2()
                     .revoke_security_group_egress()
                     .group_id(&id)
                     .security_group_rule_ids(ruleid)
@@ -572,8 +566,7 @@ async fn apply(mut l: Level<Stuff>) -> Result<()> {
     for rule in to_create {
         match &rule.dir {
             RuleDirection::In => {
-                s.more()
-                    .ec2()
+                s.ec2()
                     .authorize_security_group_ingress()
                     .group_id(&id)
                     .ip_permissions(rule.to_ip_permission(&id))
@@ -581,8 +574,7 @@ async fn apply(mut l: Level<Stuff>) -> Result<()> {
                     .await?;
             }
             RuleDirection::Out => {
-                s.more()
-                    .ec2()
+                s.ec2()
                     .authorize_security_group_egress()
                     .group_id(&id)
                     .ip_permissions(rule.to_ip_permission(&id))
@@ -600,7 +592,7 @@ async fn show(mut l: Level<Stuff>) -> Result<()> {
 
     let a = args!(l);
     let s = l.context();
-    let c = s.more().ec2();
+    let c = s.ec2();
 
     if a.args().len() != 1 {
         bad_args!(l, "specify the security group to show");

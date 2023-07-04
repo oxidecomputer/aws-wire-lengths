@@ -28,7 +28,6 @@ async fn list(mut l: Level<Stuff>) -> Result<()> {
     };
 
     let res = s
-        .more()
         .ec2()
         .describe_nat_gateways()
         .set_filter(filters)
@@ -71,7 +70,6 @@ async fn create(mut l: Level<Stuff>) -> Result<()> {
      * Allocate an Elastic IP for this gateway.
      */
     let res = s
-        .more()
         .ec2()
         .allocate_address()
         .tag_specifications(
@@ -90,7 +88,6 @@ async fn create(mut l: Level<Stuff>) -> Result<()> {
     );
 
     let res = s
-        .more()
         .ec2()
         .create_nat_gateway()
         .subnet_id(net.subnet_id().unwrap())

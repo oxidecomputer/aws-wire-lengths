@@ -19,12 +19,7 @@ async fn do_key_rm(mut l: Level<Stuff>) -> Result<()> {
     }
 
     for name in a.args().iter() {
-        s.ec2()
-            .delete_key_pair(ec2::DeleteKeyPairRequest {
-                key_name: Some(name.to_string()),
-                ..Default::default()
-            })
-            .await?;
+        s.ec2().delete_key_pair().key_name(name).send().await?;
         println!("deleted {}", name);
     }
 
@@ -54,13 +49,7 @@ async fn do_key_create(mut l: Level<Stuff>) -> Result<()> {
 
     let key_name = a.args().get(0).unwrap().to_string();
 
-    let res = s
-        .ec2()
-        .create_key_pair(ec2::CreateKeyPairRequest {
-            key_name,
-            ..Default::default()
-        })
-        .await?;
+    let res = s.ec2().create_key_pair().key_name(&key_name).send().await?;
 
     if let Some(mat) = res.key_material.as_deref() {
         f.write_all(mat.as_bytes())?;
@@ -85,15 +74,9 @@ async fn do_key_ls(mut l: Level<Stuff>) -> Result<()> {
     let mut t = a.table();
     let s = l.context();
 
-    let res = s
-        .ec2()
-        .describe_key_pairs(ec2::DescribeKeyPairsRequest {
-            ..Default::default()
-        })
-        .await?;
+    let res = s.ec2().describe_key_pairs().send().await?;
 
-    let x = Vec::new();
-    for kp in res.key_pairs.as_ref().unwrap_or(&x) {
+    for kp in res.key_pairs().unwrap_or_default() {
         let mut r = Row::default();
 
         r.add_stror("id", &kp.key_pair_id, "?");

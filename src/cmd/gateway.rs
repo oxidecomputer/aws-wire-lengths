@@ -31,7 +31,6 @@ async fn list(mut l: Level<Stuff>) -> Result<()> {
     };
 
     let res = s
-        .more()
         .ec2()
         .describe_internet_gateways()
         .set_filters(filters)
@@ -75,7 +74,6 @@ async fn create(mut l: Level<Stuff>) -> Result<()> {
     let name = a.args().get(0).unwrap().to_string();
 
     let res = s
-        .more()
         .ec2()
         .create_internet_gateway()
         .tag_specifications(
@@ -117,8 +115,7 @@ async fn attach(mut l: Level<Stuff>) -> Result<()> {
     let igw = get_igw_fuzzy(s, a.args().get(0).unwrap().as_str()).await?;
     let vpc = get_vpc_fuzzy(s, a.args().get(1).unwrap().as_str()).await?;
 
-    s.more()
-        .ec2()
+    s.ec2()
         .attach_internet_gateway()
         .internet_gateway_id(igw.internet_gateway_id().unwrap())
         .vpc_id(vpc.vpc_id.as_deref().unwrap())
@@ -141,8 +138,7 @@ async fn detach(mut l: Level<Stuff>) -> Result<()> {
     let igw = get_igw_fuzzy(s, a.args().get(0).unwrap().as_str()).await?;
     let vpc = get_vpc_fuzzy(s, a.args().get(1).unwrap().as_str()).await?;
 
-    s.more()
-        .ec2()
+    s.ec2()
         .detach_internet_gateway()
         .internet_gateway_id(igw.internet_gateway_id().unwrap())
         .vpc_id(vpc.vpc_id.as_deref().unwrap())
@@ -165,8 +161,7 @@ async fn destroy(mut l: Level<Stuff>) -> Result<()> {
 
     let igw = get_igw_fuzzy(s, &name).await?;
 
-    s.more()
-        .ec2()
+    s.ec2()
         .delete_internet_gateway()
         .internet_gateway_id(igw.internet_gateway_id().unwrap())
         .send()

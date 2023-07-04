@@ -9,11 +9,6 @@ default = ["vendored-openssl"]
 vendored-openssl = ['openssl/vendored']
 
 [dependencies]
-rusoto_core = "0.48"
-rusoto_ec2 = "0.48"
-rusoto_sts = "0.48"
-rusoto_credential = "0.48"
-rusoto_ec2_instance_connect = "0.48"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
@@ -38,8 +33,10 @@ aws-types = "0.55.3"
 aws-sdk-ec2 = "0.28.0"
 aws-sdk-s3 = "0.28.0"
 aws-sdk-ebs = "0.28.0"
+aws-sdk-sts = "0.28.0"
+aws-sdk-ec2instanceconnect = "0.28.0"
 aws-smithy-types = "0.55.3"
 aws-smithy-http = "0.55.3"
 chrono = "0.4.19"
-hyper = "0.14.16"
+hyper = { version = "0.14.16", features = ["stream"] }
 sha2 = "0.10.1"

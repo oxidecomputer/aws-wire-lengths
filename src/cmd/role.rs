@@ -1,5 +1,7 @@
 use crate::prelude::*;
 
+use aws_sdk_ebs::primitives::DateTimeFormat;
+
 pub async fn do_role(mut l: Level<Stuff>) -> Result<()> {
     l.cmd("assume", "assume a role", cmd!(do_role_assume))?;
 
@@ -18,22 +20,32 @@ async fn do_role_assume(mut l: Level<Stuff>) -> Result<()> {
     let res = l
         .context()
         .sts()
-        .assume_role(sts::AssumeRoleRequest {
-            duration_seconds: Some(3600),
-            role_arn: a.opts().opt_str("role").unwrap(),
-            role_session_name: a.opts().opt_str("session").unwrap(),
-            serial_number: a.opts().opt_str("mfa"),
-            token_code: a.opts().opt_str("token"),
-            ..Default::default()
-        })
+        .assume_role()
+        .duration_seconds(3600)
+        .role_arn(a.opts().opt_str("role").unwrap())
+        .role_session_name(a.opts().opt_str("session").unwrap())
+        .serial_number(a.opts().opt_str("mfa").unwrap())
+        .token_code(a.opts().opt_str("token").unwrap())
+        .send()
         .await?;
 
     if a.opts().opt_present("shell") {
         if let Some(c) = res.credentials {
-            println!("AWS_ACCESS_KEY_ID='{}'; ", c.access_key_id);
-            println!("AWS_CREDENTIAL_EXPIRATION='{}'; ", c.expiration);
-            println!("AWS_SECRET_ACCESS_KEY='{}'; ", c.secret_access_key);
-            println!("AWS_SESSION_TOKEN='{}'; ", c.session_token);
+            if let Some(val) = c.access_key_id.as_deref() {
+                println!("AWS_ACCESS_KEY_ID='{}'; ", val);
+            }
+            if let Some(val) = c.expiration {
+                println!(
+                    "AWS_CREDENTIAL_EXPIRATION='{}'; ",
+                    val.fmt(DateTimeFormat::DateTime).unwrap(),
+                );
+            }
+            if let Some(val) = c.secret_access_key.as_deref() {
+                println!("AWS_SECRET_ACCESS_KEY='{}'; ", val);
+            }
+            if let Some(val) = c.session_token.as_deref() {
+                println!("AWS_SESSION_TOKEN='{}'; ", val);
+            }
             for v in [
                 "ACCESS_KEY_ID",
                 "CREDENTIAL_EXPIRATION",

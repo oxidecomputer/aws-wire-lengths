@@ -47,7 +47,6 @@ async fn do_vpc_create(mut l: Level<Stuff>) -> Result<()> {
         .build();
 
     let res = s
-        .more()
         .ec2()
         .create_vpc()
         .tag_specifications(tags)
@@ -75,8 +74,7 @@ async fn do_peering_rm(mut l: Level<Stuff>) -> Result<()> {
         bad_args!(l, "specify peering connection");
     }
 
-    s.more()
-        .ec2()
+    s.ec2()
         .delete_vpc_peering_connection()
         .vpc_peering_connection_id(a.args().get(0).unwrap())
         .send()
@@ -95,12 +93,7 @@ async fn do_peering_ls(mut l: Level<Stuff>) -> Result<()> {
     let mut t = a.table();
     let s = l.context();
 
-    let res = s
-        .more()
-        .ec2()
-        .describe_vpc_peering_connections()
-        .send()
-        .await?;
+    let res = s.ec2().describe_vpc_peering_connections().send().await?;
 
     for pc in res.vpc_peering_connections().unwrap_or_default() {
         let mut r = Row::default();
@@ -131,7 +124,7 @@ async fn do_vpc_ls(mut l: Level<Stuff>) -> Result<()> {
     let mut t = a.table();
     let s = l.context();
 
-    let res = s.more().ec2().describe_vpcs().send().await?;
+    let res = s.ec2().describe_vpcs().send().await?;
 
     let empty = Vec::new();
     for vpc in res.vpcs.as_ref().unwrap_or(&empty) {

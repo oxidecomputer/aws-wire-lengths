@@ -30,7 +30,7 @@ async fn volumes(mut l: Level<Stuff>) -> Result<()> {
     let mut t = a.table();
     let s = l.context();
 
-    let res = s.more().ec2().describe_volumes().send().await?;
+    let res = s.ec2().describe_volumes().send().await?;
 
     for v in res.volumes().unwrap_or_default() {
         let mut r = Row::default();
@@ -126,7 +126,6 @@ async fn do_volume_create(mut l: Level<Stuff>) -> Result<()> {
         .build();
 
     let res = s
-        .more()
         .ec2()
         .create_volume()
         .tag_specifications(tags)
@@ -154,7 +153,6 @@ async fn do_volume_detach(mut l: Level<Stuff>) -> Result<()> {
     let v = get_vol_fuzzy(s, a.args().get(1).unwrap().as_str()).await?;
 
     let res = s
-        .more()
         .ec2()
         .detach_volume()
         .instance_id(&i.id)
@@ -181,7 +179,6 @@ async fn do_volume_attach(mut l: Level<Stuff>) -> Result<()> {
     let v = get_vol_fuzzy(s, a.args().get(1).unwrap().as_str()).await?;
 
     let res = s
-        .more()
         .ec2()
         .attach_volume()
         .instance_id(&i.id)
@@ -217,7 +214,6 @@ async fn do_volume_snapshot(mut l: Level<Stuff>) -> Result<()> {
         .build();
 
     let res = s
-        .more()
         .ec2()
         .create_snapshot()
         .volume_id(v.volume_id.as_deref().unwrap())

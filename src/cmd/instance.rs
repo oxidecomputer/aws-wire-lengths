@@ -1,3 +1,11 @@
+use aws_sdk_ebs::error::SdkError;
+use aws_sdk_ec2::types::{
+    BlockDeviceMapping, EbsBlockDevice, Filter,
+    InstanceNetworkInterfaceSpecification, InstanceType, Tag, TagSpecification,
+};
+use aws_sdk_ec2instanceconnect as ec2ic;
+use ec2ic::operation::send_serial_console_ssh_public_key::SendSerialConsoleSSHPublicKeyError;
+
 use crate::prelude::*;
 
 pub async fn do_instance(mut l: Level<Stuff>) -> Result<()> {
@@ -164,61 +172,67 @@ async fn info(mut l: Level<Stuff>) -> Result<()> {
 
         let filters = if let Some(vpc) = a.opts().opt_str("vpc") {
             let vpc = get_vpc_fuzzy(s, &vpc).await?;
-            Some(vec![ec2::Filter {
-                name: Some("vpc-id".to_string()),
-                values: Some(vec![vpc.vpc_id.unwrap()]),
-            }])
+            Some(vec![Filter::builder()
+                .name("vpc-id")
+                .values(vpc.vpc_id.unwrap())
+                .build()])
         } else {
             None
         };
 
         let res = s
             .ec2()
-            .describe_instances(ec2::DescribeInstancesRequest {
-                filters,
-                ..Default::default()
-            })
+            .describe_instances()
+            .set_filters(filters)
+            .send()
             .await?;
 
-        if let Some(r) = &res.reservations {
-            for r in r.iter() {
-                if let Some(i) = &r.instances {
-                    for i in i.iter() {
-                        let mut r = Row::default();
+        for r in res.reservations.unwrap_or_default() {
+            for i in r.instances.unwrap_or_default() {
+                let mut r = Row::default();
 
-                        let pubip = i.public_ip_address.as_deref();
-                        let privip = i.private_ip_address.as_deref();
+                let pubip = i.public_ip_address.as_deref();
+                let privip = i.private_ip_address.as_deref();
 
-                        r.add_stror("type", &i.instance_type, "-");
-                        r.add_str("id", i.instance_id.as_deref().unwrap());
-                        r.add_stror("name", &i.tags.tag("Name"), "-");
-                        r.add_str("launch", i.launch_time.as_deref().unwrap());
-                        r.add_str(
-                            "ip",
-                            pubip.unwrap_or_else(|| privip.unwrap_or("-")),
-                        );
-                        r.add_str(
-                            "state",
-                            i.state.as_ref().unwrap().name.as_deref().unwrap(),
-                        );
-                        r.add_stror(
-                            "az",
-                            &i.placement.as_ref().map(|p| {
-                                p.availability_zone
-                                    .as_ref()
-                                    .unwrap()
-                                    .to_string()
-                            }),
-                            "-",
-                        );
+                r.add_str(
+                    "type",
+                    i.instance_type
+                        .as_ref()
+                        .map(|it| it.as_str())
+                        .unwrap_or("-"),
+                );
+                r.add_str("id", i.instance_id.as_deref().unwrap());
+                r.add_stror("name", &i.tags.tag("Name"), "-");
+                let launch = i.launch_time.map(|dt| {
+                    /*
+                     * XXX
+                     */
+                    dt.fmt(aws_sdk_ebs::primitives::DateTimeFormat::DateTime)
+                        .unwrap()
+                });
+                r.add_stror("launch", &launch, "-");
+                r.add_str("ip", pubip.unwrap_or_else(|| privip.unwrap_or("-")));
+                r.add_str(
+                    "state",
+                    i.state
+                        .as_ref()
+                        .map(|s| s.name().map(|n| n.as_str()))
+                        .flatten()
+                        .unwrap_or("-"),
+                );
+                r.add_stror(
+                    "az",
+                    &i.placement.as_ref().map(|p| {
+                        p.availability_zone.as_ref().unwrap().to_string()
+                    }),
+                    "-",
+                );
 
-                        // XXX for tag in s.args.opt_strs("T") {
-                        // XXX     r.add_stror(&tag, &i.tags.tag(&tag), "-");
-                        // XXX }
+                // XXX for tag in s.args.opt_strs("T") {
+                // XXX     r.add_stror(&tag, &i.tags.tag(&tag), "-");
+                // XXX }
 
-                        t.add_row(r);
-                    }
-                }
+                t.add_row(r);
             }
         }
     }
@@ -258,10 +272,9 @@ async fn nmi(mut l: Level<Stuff>) -> Result<()> {
     println!("sending diagnostic interrupt to instance: {:?}", i);
 
     s.ec2()
-        .send_diagnostic_interrupt(ec2::SendDiagnosticInterruptRequest {
-            instance_id: i.id.to_string(),
-            ..Default::default()
-        })
+        .send_diagnostic_interrupt()
+        .instance_id(i.id)
+        .send()
         .await?;
 
     println!("all done!");
@@ -463,21 +476,16 @@ async fn sercons(mut l: Level<Stuff>) -> Result<()> {
     let mut warned = false;
     let mut nostartmsg = false;
     loop {
-        use ec2ic::SendSerialConsoleSSHPublicKeyError::*;
-
         match s
             .ic()
-            .send_serial_console_ssh_public_key(
-                ec2ic::SendSerialConsoleSSHPublicKeyRequest {
-                    instance_id: i.id.to_string(),
-                    ssh_public_key: pubkey.to_string(),
-                    ..Default::default()
-                },
-            )
+            .send_serial_console_ssh_public_key()
+            .instance_id(&i.id)
+            .ssh_public_key(&pubkey)
+            .send()
             .await
         {
             Ok(x) => {
-                if !x.success.unwrap_or_default() {
+                if !x.success() {
                     /*
                      * This is a bad API and it should feel bad.
                      */
@@ -485,44 +493,55 @@ async fn sercons(mut l: Level<Stuff>) -> Result<()> {
                 }
                 break;
             }
-            Err(RusotoError::Service(Throttling(e))) => {
-                /*
-                 * Sigh.
-                 */
-                eprintln!("WARNING: throttle? {}", e);
-                std::thread::sleep(Duration::from_secs(2));
-            }
-            Err(RusotoError::Unknown(res)) => {
-                let b = res.body_as_str();
+            Err(SdkError::ServiceError(err)) => {
+                use SendSerialConsoleSSHPublicKeyError::*;
 
-                if res.status == 400
-                    && (b.contains("stopped instance")
-                        || b.contains("pending state"))
-                {
-                    /*
-                     * This looks like the instance is not started.  So that we
-                     * can try to catch it as soon as possible in boot, poll
-                     * waiting for it to start.
-                     */
-                    if !nostartmsg {
-                        eprintln!(
-                            "INFO: instance not running? waiting to start..."
-                        );
-                        nostartmsg = true;
+                match err.err() {
+                    ThrottlingException(e) => {
+                        /*
+                         * Sigh.
+                         */
+                        eprintln!("WARNING: throttle? {}", e);
+                        std::thread::sleep(Duration::from_secs(2));
                     }
+                    SerialConsoleSessionLimitExceededException(e) => {
+                        if !warned {
+                            eprintln!("WARNING: {} (retrying)", e);
+                            warned = true;
+                        }
 
-                    std::thread::sleep(Duration::from_secs(1));
-                } else {
-                    bail!("SSH key push failure: {}", res.body_as_str());
-                }
-            }
-            Err(RusotoError::Service(SerialConsoleSessionLimitExceeded(e))) => {
-                if !warned {
-                    eprintln!("WARNING: {} (retrying)", e);
-                    warned = true;
-                }
+                        std::thread::sleep(Duration::from_secs(3));
+                    }
+                    Ec2InstanceStateInvalidException(e) => {
+                        if let Some(msg) = e.message() {
+                            if msg.contains("stopped instance")
+                                || msg.contains("pending state")
+                            {
+                                /*
+                                 * This looks like the instance is not
+                                 * started.  So that we can try to catch it
+                                 * as soon as possible in boot, poll waiting
+                                 * for it to start.
+                                 */
+                                if !nostartmsg {
+                                    eprintln!(
+                                        "INFO: instance not running? \
+                                        waiting to start..."
+                                    );
+                                    nostartmsg = true;
+                                }
 
-                std::thread::sleep(Duration::from_secs(3));
+                                std::thread::sleep(Duration::from_secs(1));
+                                continue;
+                            }
+                        }
+
+                        bail!("SSH key push failure: {e}");
+                    }
+                    other => {
+                        bail!("SSH key push failure: {other}");
+                    }
+                }
             }
             Err(e) => {
                 bail!("SSH key push failure: {:?}", e);
@@ -548,7 +567,7 @@ async fn sercons(mut l: Level<Stuff>) -> Result<()> {
         .arg(format!(
             "{}.port0@serial-console.ec2-instance-connect.{}.aws",
             i.id,
-            s.region_ec2().name()
+            s.region_ec2().to_string(),
         ))
         .exec();
 
@@ -589,12 +608,7 @@ async fn reboot(mut l: Level<Stuff>) -> Result<()> {
 
     println!("rebooting instance: {:?}", i);
 
-    s.ec2()
-        .reboot_instances(ec2::RebootInstancesRequest {
-            instance_ids: vec![i.id.to_string()],
-            ..Default::default()
-        })
-        .await?;
+    s.ec2().reboot_instances().instance_ids(i.id).send().await?;
 
     println!("all done!");
 
@@ -729,7 +743,6 @@ async fn volumes(mut l: Level<Stuff>) -> Result<()> {
     let i = get_instance_fuzzy(l.context(), n).await?;
 
     let res = s
-        .more()
         .ec2()
         .describe_volumes()
         .filters(
@@ -798,17 +811,15 @@ async fn dump(mut l: Level<Stuff>) -> Result<()> {
 
     let res = s
         .ec2()
-        .describe_instance_attribute(ec2::DescribeInstanceAttributeRequest {
-            attribute: "disableApiTermination".to_string(),
-            instance_id: i.id.to_string(),
-            ..Default::default()
-        })
+        .describe_instance_attribute()
+        .attribute("disableApiTermination".into())
+        .instance_id(i.id)
+        .send()
         .await?;
 
     if res
         .disable_api_termination
-        .unwrap_or_default()
-        .value
+        .map(|v| v.value.unwrap_or_default())
         .unwrap_or_default()
     {
         println!("TERMINATION PROTECTION: yes");
@@ -845,56 +856,58 @@ struct InstanceOptions {
 
 async fn i_create_instance(s: &Stuff, io: &InstanceOptions) -> Result<String> {
     let tag_specifications = if !io.tags.is_empty() {
-        let mut tags = Vec::new();
-        for (k, v) in io.tags.iter() {
-            tags.push(ec2::Tag {
-                key: ss(k.as_str()),
-                value: ss(v.as_str()),
-            });
-        }
-        Some(vec![ec2::TagSpecification {
-            resource_type: ss("instance"),
-            tags: Some(tags),
-        }])
+        let tags = io
+            .tags
+            .iter()
+            .map(|(k, v)| Tag::builder().key(k).value(v).build())
+            .collect::<Vec<_>>();
+        Some(vec![TagSpecification::builder()
+            .resource_type(aws_sdk_ec2::types::ResourceType::Instance)
+            .set_tags(Some(tags))
+            .build()])
     } else {
         None
     };
 
-    let rir = ec2::RunInstancesRequest {
-        image_id: ss(&io.ami_id),
-        instance_type: ss(&io.type_name),
-        key_name: ss(&io.key_name),
-        min_count: 1,
-        max_count: 1,
-        tag_specifications,
-        block_device_mappings: Some(vec![ec2::BlockDeviceMapping {
-            device_name: ss("/dev/sda1"),
-            ebs: Some(ec2::EbsBlockDevice {
-                volume_size: Some(io.root_size_gb as i64),
-                ..Default::default()
-            }),
-            ..Default::default()
-        }]),
-        network_interfaces: Some(vec![
-            ec2::InstanceNetworkInterfaceSpecification {
-                device_index: Some(0),
-                subnet_id: ss(&io.subnet_id),
-                groups: Some(vec![io.sg_id.to_string()]),
-                associate_public_ip_address: io.public_ip,
-                ..Default::default()
-            },
-        ]),
-        user_data: io.user_data.as_deref().map(|x| base64_encode(x.as_bytes())),
-        ..Default::default()
-    };
+    let res = s
+        .ec2()
+        .run_instances()
+        .image_id(&io.ami_id)
+        .instance_type(InstanceType::try_from(&*io.type_name)?)
+        .key_name(&io.key_name)
+        .min_count(1)
+        .max_count(1)
+        .set_tag_specifications(tag_specifications)
+        .block_device_mappings(
+            BlockDeviceMapping::builder()
+                .device_name("/dev/sda1")
+                .ebs(
+                    EbsBlockDevice::builder()
+                        .volume_size(io.root_size_gb as i32)
+                        .build(),
+                )
+                .build(),
+        )
+        .network_interfaces(
+            InstanceNetworkInterfaceSpecification::builder()
+                .device_index(0)
+                .subnet_id(&io.subnet_id)
+                .groups(&io.sg_id)
+                .associate_public_ip_address(io.public_ip.unwrap_or_default())
+                .build(),
+        )
+        .set_user_data(
+            io.user_data.as_deref().map(|x| base64_encode(x.as_bytes())),
+        )
+        .send()
+        .await?;
 
-    let res = s.ec2().run_instances(rir).await?;
-    let mut ids = Vec::new();
-    if let Some(insts) = &res.instances {
-        for i in insts.iter() {
-            ids.push(i.instance_id.as_deref().unwrap().to_string());
-        }
-    }
+    let ids = res
+        .instances()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|i| i.instance_id().map(|s| s.to_string()))
+        .collect::<Vec<_>>();
 
     if ids.len() != 1 {
         bail!("wanted one instance, got {:?}", ids);

@@ -1,24 +1,12 @@
 /*
- * Copyright 2021 Oxide Computer Company
+ * Copyright 2023 Oxide Computer Company
  */
 
 #![allow(clippy::many_single_char_names)]
 
-use std::str::FromStr;
-
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Result};
+use aws_types::region::Region;
 use hiercmd::prelude::*;
-use rusoto_core::{HttpClient, Region};
-use rusoto_credential::{
-    DefaultCredentialsProvider, EnvironmentProvider, ProvideAwsCredentials,
-};
-use rusoto_ec2 as ec2;
-use rusoto_ec2_instance_connect as ec2ic;
-use rusoto_sts as sts;
-
-use ec2::Ec2;
-use ec2ic::Ec2InstanceConnect;
-use sts::Sts;
 
 mod base;
 mod util;
@@ -37,10 +25,6 @@ mod prelude {
     pub(crate) use rand::thread_rng;
     pub(crate) use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey};
     pub(crate) use rsa::PublicKeyParts;
-    pub(crate) use rusoto_core::RusotoError;
-    pub(crate) use rusoto_ec2 as ec2;
-    pub(crate) use rusoto_ec2_instance_connect as ec2ic;
-    pub(crate) use rusoto_sts as sts;
 
     pub(crate) use super::base::*;
     pub(crate) use super::util::*;
@@ -67,52 +51,59 @@ use cmd::type_::do_type;
 use cmd::volume::do_volume;
 use cmd::vpc::do_vpc;
 
-mod sdk;
-
 #[derive(Default)]
 pub struct Stuff {
-    region_ec2: Region,
-    region_s3: Region,
-    region_sts: Region,
-    ec2: Option<ec2::Ec2Client>,
-    ic: Option<ec2ic::Ec2InstanceConnectClient>,
-    sts: Option<sts::StsClient>,
-    credprov: Option<Box<dyn ProvideAwsCredentials + Send + Sync>>,
-    more: Option<sdk::More>,
+    region_ec2: Option<Region>,
+    region_s3: Option<Region>,
+    region_sts: Option<Region>,
+
+    ec2: Option<aws_sdk_ec2::Client>,
+    ebs: Option<aws_sdk_ebs::Client>,
+    s3: Option<aws_sdk_s3::Client>,
+    sts: Option<aws_sdk_sts::Client>,
+    ec2ic: Option<aws_sdk_ec2instanceconnect::Client>,
 }
 
 #[allow(dead_code)]
 impl Stuff {
-    fn ec2(&self) -> &dyn Ec2 {
-        self.ec2.as_ref().unwrap()
-    }
-
-    fn sts(&self) -> &dyn Sts {
-        self.sts.as_ref().unwrap()
-    }
-
-    fn ic(&self) -> &dyn Ec2InstanceConnect {
-        self.ic.as_ref().unwrap()
-    }
-
     fn region_ec2(&self) -> &Region {
-        &self.region_ec2
+        self.region_ec2.as_ref().unwrap()
     }
 
     fn region_s3(&self) -> &Region {
-        &self.region_s3
+        self.region_s3.as_ref().unwrap()
     }
 
     fn region_sts(&self) -> &Region {
-        &self.region_sts
+        self.region_sts.as_ref().unwrap()
     }
 
-    fn credprov(&self) -> &dyn ProvideAwsCredentials {
-        self.credprov.as_deref().unwrap()
+    pub fn ec2(&self) -> &aws_sdk_ec2::Client {
+        self.ec2.as_ref().unwrap()
     }
 
-    fn more(&self) -> &sdk::More {
-        self.more.as_ref().unwrap()
+    pub fn ebs(&self) -> &aws_sdk_ebs::Client {
+        self.ebs.as_ref().unwrap()
+    }
+
+    pub async fn ec2_for_region(&self, region: &str) -> aws_sdk_ec2::Client {
+        let cfg = aws_config::from_env()
+            .region(Region::new(region.to_string()))
+            .load()
+            .await;
+        aws_sdk_ec2::Client::new(&cfg)
+    }
+
+    pub fn s3(&self) -> &aws_sdk_s3::Client {
+        self.s3.as_ref().unwrap()
+    }
+
+    pub fn sts(&self) -> &aws_sdk_sts::Client {
+        self.sts.as_ref().unwrap()
+    }
+
+    pub fn ic(&self) -> &aws_sdk_ec2instanceconnect::Client {
+        self.ec2ic.as_ref().unwrap()
     }
 }
 
@@ -120,7 +111,6 @@ impl Stuff {
 async fn main() -> Result<()> {
     let mut l = Level::new("aws-wire-lengths", Stuff::default());
 
-    l.optflag("e", "", "use environment variables for credentials");
     l.optopt("r", "region-ec2", "region for EC2", "REGION");
     l.optopt("R", "region-s3", "region for S3", "REGION");
     l.optopt("", "region-sts", "region for STS", "REGION");
@@ -176,70 +166,66 @@ async fn main() -> Result<()> {
      */
     let mut s = sel!(l);
 
-    s.context_mut().credprov = Some(if s.opts().opt_present("e") {
-        Box::new(EnvironmentProvider::default())
-    } else {
-        Box::new(DefaultCredentialsProvider::new()?)
-    });
+    s.context_mut().region_ec2 = Some(
+        aws_config::meta::region::RegionProviderChain::first_try(
+            s.opts().opt_str("region-ec2").map(|s| Region::new(s)),
+        )
+        .or_default_provider()
+        .or_else(Region::new("us-east-1"))
+        .region()
+        .await
+        .ok_or_else(|| anyhow!("could not get region for EC2"))?,
+    );
+    s.context_mut().region_s3 = Some(
+        aws_config::meta::region::RegionProviderChain::first_try(
+            s.opts().opt_str("region-s3").map(|s| Region::new(s)),
+        )
+        .or_default_provider()
+        .or_else(Region::new("us-east-1"))
+        .region()
+        .await
+        .ok_or_else(|| anyhow!("could not get region for EC2"))?,
+    );
+    s.context_mut().region_sts = Some(
+        aws_config::meta::region::RegionProviderChain::first_try(
+            s.opts().opt_str("region-sts").map(|s| Region::new(s)),
+        )
+        .or_default_provider()
+        .or_else(Region::new("us-east-1"))
+        .region()
+        .await
+        .ok_or_else(|| anyhow!("could not get region for EC2"))?,
+    );
 
-    /*
-     * Allow the region to be overridden by a command-line argument.  Otherwise,
-     * we depend on the Default implementation of Region, which will inspect the
-     * environment, or the AWS configuration file, or fall back to us-east-1.
-     */
-    if let Some(reg) = s.opts().opt_str("region-s3").as_deref() {
-        s.context_mut().region_s3 =
-            Region::from_str(reg).context("invalid S3 region")?;
-    };
-    if let Some(reg) = s.opts().opt_str("region-ec2").as_deref() {
-        s.context_mut().region_ec2 =
-            Region::from_str(reg).context("invalid EC2 region")?;
-    };
-    if let Some(reg) = s.opts().opt_str("region-sts").as_deref() {
-        s.context_mut().region_sts =
-            Region::from_str(reg).context("invalid STS region")?;
-    };
+    let cfg = aws_config::from_env()
+        .region(s.context().region_ec2().clone())
+        .load()
+        .await;
+    s.context_mut().ec2 = Some(aws_sdk_ec2::Client::new(&cfg));
 
-    if s.opts().opt_present("e") {
-        let mut stuff = s.context_mut();
-        stuff.ec2 = Some(ec2::Ec2Client::new_with(
-            HttpClient::new()?,
-            EnvironmentProvider::default(),
-            stuff.region_ec2.clone(),
-        ));
-        stuff.ic = Some(ec2ic::Ec2InstanceConnectClient::new_with(
-            HttpClient::new()?,
-            EnvironmentProvider::default(),
-            stuff.region_ec2.clone(),
-        ));
-        stuff.sts = Some(sts::StsClient::new_with(
-            HttpClient::new()?,
-            EnvironmentProvider::default(),
-            stuff.region_sts.clone(),
-        ));
-    } else {
-        let mut stuff = s.context_mut();
-        stuff.ec2 = Some(ec2::Ec2Client::new_with(
-            HttpClient::new()?,
-            DefaultCredentialsProvider::new()?,
-            stuff.region_ec2.clone(),
-        ));
-        stuff.ic = Some(ec2ic::Ec2InstanceConnectClient::new_with(
-            HttpClient::new()?,
-            DefaultCredentialsProvider::new()?,
-            stuff.region_ec2.clone(),
-        ));
-        stuff.sts = Some(sts::StsClient::new_with(
-            HttpClient::new()?,
-            DefaultCredentialsProvider::new()?,
-            stuff.region_sts.clone(),
-        ));
-    };
+    let cfg = aws_config::from_env()
+        .region(s.context().region_ec2().clone())
+        .load()
+        .await;
+    s.context_mut().ec2ic = Some(aws_sdk_ec2instanceconnect::Client::new(&cfg));
 
-    let ne = s.context().region_ec2.name().to_string();
-    let ns = s.context().region_s3.name().to_string();
+    let cfg = aws_config::from_env()
+        .region(s.context().region_ec2().clone())
+        .load()
+        .await;
+    s.context_mut().ebs = Some(aws_sdk_ebs::Client::new(&cfg));
 
-    s.context_mut().more = Some(sdk::More::new(Some(&ne), Some(&ns)).await?);
+    let cfg = aws_config::from_env()
+        .region(s.context().region_s3().clone())
+        .load()
+        .await;
+    s.context_mut().s3 = Some(aws_sdk_s3::Client::new(&cfg));
+
+    let cfg = aws_config::from_env()
+        .region(s.context().region_sts().clone())
+        .load()
+        .await;
+    s.context_mut().sts = Some(aws_sdk_sts::Client::new(&cfg));
 
     s.run().await
 }
