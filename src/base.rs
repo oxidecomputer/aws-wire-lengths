@@ -23,6 +23,7 @@ pub struct Instance {
     pub tags: Vec<Tag>,
     pub nics: Vec<String>,
     pub az: Option<String>,
+    pub raw: aws_sdk_ec2::types::Instance,
 }
 
 #[derive(Debug, Clone)]
@@ -308,6 +309,7 @@ async fn get_instance_x(
                     az: inst.placement.as_ref().map(|p| {
                         p.availability_zone.as_ref().unwrap().to_string()
                     }),
+                    raw: inst.clone(),
                 });
             }
         }

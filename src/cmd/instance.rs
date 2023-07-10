@@ -827,6 +827,22 @@ async fn dump(mut l: Level<Stuff>) -> Result<()> {
         println!("TERMINATION PROTECTION: no");
     }
 
+    for sg in i.raw.security_groups().unwrap_or_default() {
+        if let Some((id, name)) =
+            sg.group_id.as_deref().zip(sg.group_name().as_deref())
+        {
+            println!("SECURITY GROUP: {id} {name:?}");
+        }
+    }
+
+    if let Some(vpc) = i.raw.vpc_id() {
+        println!("VPC: {vpc}");
+    }
+
+    if let Some(subnet) = i.raw.subnet_id() {
+        println!("SUBNET: {subnet}");
+    }
+
     println!("{:<34} {:<45}", "TAG", "VALUE");
     for t in i.tags.iter() {
         let k = if let Some(k) = t.key.as_deref() {
