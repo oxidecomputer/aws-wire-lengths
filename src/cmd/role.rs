@@ -31,21 +31,13 @@ async fn do_role_assume(mut l: Level<Stuff>) -> Result<()> {
 
     if a.opts().opt_present("shell") {
         if let Some(c) = res.credentials {
-            if let Some(val) = c.access_key_id.as_deref() {
-                println!("AWS_ACCESS_KEY_ID='{}'; ", val);
-            }
-            if let Some(val) = c.expiration {
-                println!(
-                    "AWS_CREDENTIAL_EXPIRATION='{}'; ",
-                    val.fmt(DateTimeFormat::DateTime).unwrap(),
-                );
-            }
-            if let Some(val) = c.secret_access_key.as_deref() {
-                println!("AWS_SECRET_ACCESS_KEY='{}'; ", val);
-            }
-            if let Some(val) = c.session_token.as_deref() {
-                println!("AWS_SESSION_TOKEN='{}'; ", val);
-            }
+            println!("AWS_ACCESS_KEY_ID='{}'; ", c.access_key_id());
+            println!(
+                "AWS_CREDENTIAL_EXPIRATION='{}'; ",
+                c.expiration().fmt(DateTimeFormat::DateTime).unwrap(),
+            );
+            println!("AWS_SECRET_ACCESS_KEY='{}'; ", c.secret_access_key());
+            println!("AWS_SESSION_TOKEN='{}'; ", c.session_token());
             for v in [
                 "ACCESS_KEY_ID",
                 "CREDENTIAL_EXPIRATION",

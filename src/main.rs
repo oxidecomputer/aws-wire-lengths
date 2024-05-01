@@ -9,6 +9,7 @@ use aws_types::region::Region;
 use hiercmd::prelude::*;
 
 mod base;
+mod body;
 mod util;
 
 mod prelude {
@@ -24,9 +25,10 @@ mod prelude {
     pub(crate) use hiercmd::prelude::*;
     pub(crate) use rand::thread_rng;
     pub(crate) use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey};
-    pub(crate) use rsa::PublicKeyParts;
+    pub(crate) use rsa::traits::PublicKeyParts;
 
     pub(crate) use super::base::*;
+    pub(crate) use super::body::StreamBody;
     pub(crate) use super::util::*;
     pub(crate) use super::Stuff;
 }
@@ -66,6 +68,10 @@ pub struct Stuff {
 
 #[allow(dead_code)]
 impl Stuff {
+    fn aws_config_loader() -> aws_config::ConfigLoader {
+        aws_config::defaults(aws_config::BehaviorVersion::v2023_11_09())
+    }
+
     fn region_ec2(&self) -> &Region {
         self.region_ec2.as_ref().unwrap()
     }
@@ -87,7 +93,7 @@ impl Stuff {
     }
 
     pub async fn ec2_for_region(&self, region: &str) -> aws_sdk_ec2::Client {
-        let cfg = aws_config::from_env()
+        let cfg = Self::aws_config_loader()
             .region(Region::new(region.to_string()))
             .load()
             .await;
@@ -197,31 +203,31 @@ async fn main() -> Result<()> {
         .ok_or_else(|| anyhow!("could not get region for EC2"))?,
     );
 
-    let cfg = aws_config::from_env()
+    let cfg = Stuff::aws_config_loader()
         .region(s.context().region_ec2().clone())
         .load()
         .await;
     s.context_mut().ec2 = Some(aws_sdk_ec2::Client::new(&cfg));
 
-    let cfg = aws_config::from_env()
+    let cfg = Stuff::aws_config_loader()
         .region(s.context().region_ec2().clone())
         .load()
         .await;
     s.context_mut().ec2ic = Some(aws_sdk_ec2instanceconnect::Client::new(&cfg));
 
-    let cfg = aws_config::from_env()
+    let cfg = Stuff::aws_config_loader()
         .region(s.context().region_ec2().clone())
         .load()
         .await;
     s.context_mut().ebs = Some(aws_sdk_ebs::Client::new(&cfg));
 
-    let cfg = aws_config::from_env()
+    let cfg = Stuff::aws_config_loader()
         .region(s.context().region_s3().clone())
         .load()
         .await;
     s.context_mut().s3 = Some(aws_sdk_s3::Client::new(&cfg));
 
-    let cfg = aws_config::from_env()
+    let cfg = Stuff::aws_config_loader()
         .region(s.context().region_sts().clone())
         .load()
         .await;

@@ -1,4 +1,4 @@
-use futures::StreamExt;
+use aws_sdk_s3::error::SdkError;
 
 use crate::prelude::*;
 
@@ -12,11 +12,11 @@ async fn do_bucket_ls(mut l: Level<Stuff>) -> Result<()> {
 
     let res = s.s3().list_buckets().send().await?;
 
-    for b in res.buckets().unwrap_or_default() {
+    for b in res.buckets() {
         let mut r = Row::default();
 
-        r.add_stror("name", &b.name, "?");
-        r.add_stror("creation", &b.creation_date.as_utc(), "-");
+        r.add_stror("name", b.name.as_deref(), "?");
+        r.add_stror("creation", b.creation_date.as_utc().as_deref(), "-");
 
         t.add_row(r);
     }
@@ -70,8 +70,6 @@ async fn do_bucket_create(mut l: Level<Stuff>) -> Result<()> {
 }
 
 async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
-    use aws_smithy_http::result::SdkError;
-
     l.usage_args(Some("BUCKET"));
 
     let a = args!(l);
@@ -224,7 +222,7 @@ async fn do_object_tree(mut l: Level<Stuff>) -> Result<()> {
     }
 
     while let Some(res) = list.next().await.transpose()? {
-        for o in res.contents().unwrap_or_default() {
+        for o in res.contents() {
             /*
              * We are only able to store and enumerate objects in S3, so we
              * simulate directories by splitting on the delimiter character.
@@ -277,8 +275,8 @@ async fn do_object_tree(mut l: Level<Stuff>) -> Result<()> {
                 println!(
                     r#",{{"name":"{}","asize":{},"dsize":{}}}"#,
                     levels[levels.len() - 1],
-                    o.size(),
-                    o.size(),
+                    o.size().unwrap_or_default(),
+                    o.size().unwrap_or_default(),
                 );
             }
         }
@@ -322,7 +320,7 @@ async fn do_object_ls(mut l: Level<Stuff>) -> Result<()> {
         .send();
 
     while let Some(res) = list.next().await.transpose()? {
-        for o in res.contents().unwrap_or_default() {
+        for o in res.contents() {
             let key = o.key().ok_or_else(|| anyhow!("no key?"))?;
             let size = o.size();
             let mtime = o.last_modified.as_utc();
@@ -330,10 +328,16 @@ async fn do_object_ls(mut l: Level<Stuff>) -> Result<()> {
             let etag = o.e_tag().unwrap_or("-");
 
             if a.opts().opt_present("L") {
-                println!("{} {} {} {}", size, mtime, etag, key);
+                println!(
+                    "{} {} {} {}",
+                    size.unwrap_or_default(),
+                    mtime,
+                    etag,
+                    key,
+                );
             }
             if a.opts().opt_present("l") {
-                println!("{} {} {}", size, mtime, key);
+                println!("{} {} {}", size.unwrap_or_default(), mtime, key);
             } else {
                 println!("{}", key);
             }
@@ -507,12 +511,10 @@ async fn do_object_put(mut l: Level<Stuff>) -> Result<()> {
 
     let (content_length, body) = if let Some(known_size) = known_size {
         let input = tokio::io::stdin();
-        let stree = tokio_util::io::ReaderStream::new(input);
-        let body = hyper::Body::wrap_stream(stree);
-        (
-            known_size.try_into().unwrap(),
-            aws_sdk_s3::primitives::ByteStream::new(body.into()),
-        )
+        let body = aws_sdk_s3::primitives::SdkBody::from_body_1_x(
+            StreamBody::new(tokio_util::io::ReaderStream::new(input)),
+        );
+        (known_size.try_into().unwrap(), body.into())
     } else {
         /*
          * It's a pipe.  Try to read all of the data into memory.

@@ -157,11 +157,11 @@ async fn info(mut l: Level<Stuff>) -> Result<()> {
 
             let mut r = Row::default();
             r.add_str("id", &i.id);
-            r.add_stror("name", &i.name, "-");
+            r.add_stror("name", i.name.as_deref(), "-");
             r.add_str("launch", &i.launch);
-            r.add_stror("ip", &i.ip, "-");
+            r.add_stror("ip", i.ip.as_deref(), "-");
             r.add_str("state", &i.state);
-            r.add_stror("az", &i.az, "-");
+            r.add_stror("az", i.az.as_deref(), "-");
             // XXX for tag in s.args.opt_strs("T") {
             // XXX     r.add_str(&tag, "-"); /* XXX */
             // XXX }
@@ -187,8 +187,8 @@ async fn info(mut l: Level<Stuff>) -> Result<()> {
             .send()
             .await?;
 
-        for r in res.reservations.unwrap_or_default() {
-            for i in r.instances.unwrap_or_default() {
+        for r in res.reservations() {
+            for i in r.instances() {
                 let mut r = Row::default();
 
                 let pubip = i.public_ip_address.as_deref();
@@ -202,7 +202,7 @@ async fn info(mut l: Level<Stuff>) -> Result<()> {
                         .unwrap_or("-"),
                 );
                 r.add_str("id", i.instance_id.as_deref().unwrap());
-                r.add_stror("name", &i.tags.tag("Name"), "-");
+                r.add_stror("name", i.tags.tag("Name").as_deref(), "-");
                 let launch = i.launch_time.map(|dt| {
                     /*
                      * XXX
@@ -210,7 +210,7 @@ async fn info(mut l: Level<Stuff>) -> Result<()> {
                     dt.fmt(aws_sdk_ebs::primitives::DateTimeFormat::DateTime)
                         .unwrap()
                 });
-                r.add_stror("launch", &launch, "-");
+                r.add_stror("launch", launch.as_deref(), "-");
                 r.add_str("ip", pubip.unwrap_or_else(|| privip.unwrap_or("-")));
                 r.add_str(
                     "state",
@@ -222,9 +222,9 @@ async fn info(mut l: Level<Stuff>) -> Result<()> {
                 );
                 r.add_stror(
                     "az",
-                    &i.placement.as_ref().map(|p| {
-                        p.availability_zone.as_ref().unwrap().to_string()
-                    }),
+                    i.placement
+                        .as_ref()
+                        .and_then(|p| p.availability_zone.as_deref()),
                     "-",
                 );
 
@@ -754,8 +754,8 @@ async fn volumes(mut l: Level<Stuff>) -> Result<()> {
         .send()
         .await?;
 
-    for vol in res.volumes().unwrap_or_default() {
-        for att in vol.attachments().unwrap_or_default() {
+    for vol in res.volumes() {
+        for att in vol.attachments() {
             let mut r = Row::default();
 
             let flags =
@@ -766,21 +766,13 @@ async fn volumes(mut l: Level<Stuff>) -> Result<()> {
 
             r.add_str("id", vol.volume_id().unwrap());
             r.add_str("flags", &flags);
-            r.add_stror("name", &vol.tags.tag("Name"), "-");
+            r.add_stror("name", vol.tags.tag("Name").as_deref(), "-");
             r.add_bytes(
                 "size",
                 size_gbs.checked_mul(1024 * 1024 * 1024).unwrap(),
             );
-            r.add_stror(
-                "state",
-                &vol.state().map(|v| v.as_str().to_string()),
-                "-",
-            );
-            r.add_stror(
-                "astate",
-                &att.state().map(|a| a.as_str().to_string()),
-                "-",
-            );
+            r.add_stror("state", vol.state().map(|v| v.as_str()), "-");
+            r.add_stror("astate", att.state().map(|a| a.as_str()), "-");
             r.add_str(
                 "device",
                 if let Some(dev) = att.device() {
@@ -827,7 +819,7 @@ async fn dump(mut l: Level<Stuff>) -> Result<()> {
         println!("TERMINATION PROTECTION: no");
     }
 
-    for sg in i.raw.security_groups().unwrap_or_default() {
+    for sg in i.raw.security_groups() {
         if let Some((id, name)) =
             sg.group_id.as_deref().zip(sg.group_name().as_deref())
         {
@@ -841,6 +833,25 @@ async fn dump(mut l: Level<Stuff>) -> Result<()> {
 
     if let Some(subnet) = i.raw.subnet_id() {
         println!("SUBNET: {subnet}");
+    }
+
+    if let Some(ip) = i.raw.public_ip_address() {
+        println!("PUBLIC ADDRESS: {ip}");
+    }
+    if let Some(ip) = i.raw.private_ip_address() {
+        println!("PRIVATE ADDRESS: {ip}");
+    }
+
+    for ni in i.raw.network_interfaces() {
+        let Some(id) = ni.network_interface_id() else {
+            continue;
+        };
+
+        println!("NETWORK INTERFACE {id}:");
+
+        if let Some(ip) = ni.private_ip_address() {
+            println!("    PRIVATE IP: {ip}");
+        }
     }
 
     println!("{:<34} {:<45}", "TAG", "VALUE");
@@ -920,8 +931,7 @@ async fn i_create_instance(s: &Stuff, io: &InstanceOptions) -> Result<String> {
 
     let ids = res
         .instances()
-        .unwrap_or_default()
-        .into_iter()
+        .iter()
         .filter_map(|i| i.instance_id().map(|s| s.to_string()))
         .collect::<Vec<_>>();
 

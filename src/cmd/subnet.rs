@@ -108,11 +108,11 @@ async fn do_subnet_ls(mut l: Level<Stuff>) -> Result<()> {
 
         let mut r = Row::default();
 
-        r.add_stror("id", &sn.subnet_id, "?");
-        r.add_stror("vpc", &sn.vpc_id, "-");
-        r.add_stror("cidr", &sn.cidr_block, "-");
-        r.add_stror("name", &nametag, "-");
-        r.add_stror("az", &sn.availability_zone, "-");
+        r.add_stror("id", sn.subnet_id.as_deref(), "?");
+        r.add_stror("vpc", sn.vpc_id.as_deref(), "-");
+        r.add_stror("cidr", sn.cidr_block.as_deref(), "-");
+        r.add_stror("name", nametag.as_deref(), "-");
+        r.add_stror("az", sn.availability_zone.as_deref(), "-");
         r.add_str("flags", &flags);
         r.add_u64("avail", sn.available_ip_address_count.unwrap_or(0) as u64);
 

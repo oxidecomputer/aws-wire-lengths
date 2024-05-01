@@ -131,13 +131,13 @@ async fn list(mut l: Level<Stuff>) -> Result<()> {
 
     let res = s.ec2().describe_addresses().send().await?;
 
-    for addr in res.addresses().unwrap_or_default().iter() {
+    for addr in res.addresses() {
         let n = addr.tags.tag("Name");
 
         let mut r = Row::default();
-        r.add_stror("id", &addr.allocation_id, "?");
-        r.add_stror("name", &n, "-");
-        r.add_stror("ip", &addr.public_ip, "-");
+        r.add_stror("id", addr.allocation_id.as_deref(), "?");
+        r.add_stror("name", n.as_deref(), "-");
+        r.add_stror("ip", addr.public_ip.as_deref(), "-");
         t.add_row(r);
     }
 

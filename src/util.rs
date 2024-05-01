@@ -28,11 +28,11 @@ impl DateTimeOptExt for Option<aws_smithy_types::DateTime> {
 }
 
 pub trait RowExt {
-    fn add_stror(&mut self, n: &str, v: &Option<String>, def: &str);
+    fn add_stror(&mut self, n: &str, v: Option<&str>, def: &str);
 }
 
 impl RowExt for Row {
-    fn add_stror(&mut self, n: &str, v: &Option<String>, def: &str) {
+    fn add_stror(&mut self, n: &str, v: Option<&str>, def: &str) {
         self.add_str(n, v.as_deref().unwrap_or(def));
     }
 }

@@ -27,10 +27,10 @@ pub async fn do_az_ls(mut l: Level<Stuff>) -> Result<()> {
         .send()
         .await?;
 
-    for az in res.availability_zones().unwrap_or_default() {
+    for az in res.availability_zones() {
         let mut r = Row::default();
 
-        r.add_stror("name", &az.zone_name, "?");
+        r.add_stror("name", az.zone_name.as_deref(), "?");
         r.add_str(
             "type",
             match &az.zone_type.as_deref() {
@@ -52,8 +52,8 @@ pub async fn do_az_ls(mut l: Level<Stuff>) -> Result<()> {
             }
             .to_string()
         });
-        r.add_stror("state", &state, "-");
-        r.add_stror("group", &az.network_border_group, "-");
+        r.add_stror("state", state.as_deref(), "-");
+        r.add_stror("group", az.network_border_group.as_deref(), "-");
 
         t.add_row(r);
     }

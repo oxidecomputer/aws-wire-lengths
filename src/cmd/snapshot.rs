@@ -86,17 +86,13 @@ async fn snapshots(mut l: Level<Stuff>) -> Result<()> {
     for s in res.snapshots.as_ref().unwrap_or(&x) {
         let mut r = Row::default();
 
-        r.add_stror("id", &s.snapshot_id, "?");
-        r.add_stror("start", &s.start_time.as_utc(), "-");
-        r.add_stror(
-            "state",
-            &s.state.as_ref().map(|s| s.as_str().to_string()),
-            "-",
-        );
+        r.add_stror("id", s.snapshot_id.as_deref(), "?");
+        r.add_stror("start", s.start_time.as_utc().as_deref(), "-");
+        r.add_stror("state", s.state.as_ref().map(|s| s.as_str()), "-");
         r.add_u64("size", s.volume_size.unwrap_or(0) as u64);
-        r.add_stror("volume", &s.volume_id, "-");
-        r.add_stror("desc", &s.description, "-");
-        r.add_stror("name", &s.tags.tag("Name"), "-");
+        r.add_stror("volume", s.volume_id.as_deref(), "-");
+        r.add_stror("desc", s.description.as_deref(), "-");
+        r.add_stror("name", s.tags.tag("Name").as_deref(), "-");
 
         t.add_row(r);
     }

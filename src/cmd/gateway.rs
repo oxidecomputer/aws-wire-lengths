@@ -37,23 +37,19 @@ async fn list(mut l: Level<Stuff>) -> Result<()> {
         .send()
         .await?;
 
-    for igw in res.internet_gateways.unwrap_or_default().iter() {
+    for igw in res.internet_gateways() {
         let n = igw.tags.tag("Name");
 
-        let vpc = if let Some(atts) = igw.attachments() {
-            match atts.len() {
-                0 => None,
-                1 => Some(atts[0].vpc_id().unwrap().to_string()),
-                n => bail!("expected 0 or 1, not {}, attachments", n),
-            }
-        } else {
-            None
+        let vpc = match igw.attachments() {
+            [] => None,
+            [att] => Some(att.vpc_id().unwrap().to_string()),
+            tm => bail!("expected 0 or 1, not {}, attachments", tm.len()),
         };
 
         let mut r = Row::default();
-        r.add_stror("id", &igw.internet_gateway_id, "?");
-        r.add_stror("name", &n, "-");
-        r.add_stror("vpc", &vpc, "-");
+        r.add_stror("id", igw.internet_gateway_id.as_deref(), "?");
+        r.add_stror("name", n.as_deref(), "-");
+        r.add_stror("vpc", vpc.as_deref(), "-");
         t.add_row(r);
     }
 

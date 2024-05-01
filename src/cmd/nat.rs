@@ -34,13 +34,13 @@ async fn list(mut l: Level<Stuff>) -> Result<()> {
         .send()
         .await?;
 
-    for nat in res.nat_gateways.unwrap_or_default().iter() {
+    for nat in res.nat_gateways() {
         let n = nat.tags.tag("Name");
 
         let mut r = Row::default();
-        r.add_stror("id", &nat.nat_gateway_id, "?");
-        r.add_stror("name", &n, "-");
-        r.add_stror("vpc", &nat.vpc_id, "-");
+        r.add_stror("id", nat.nat_gateway_id.as_deref(), "?");
+        r.add_stror("name", n.as_deref(), "-");
+        r.add_stror("vpc", nat.vpc_id.as_deref(), "-");
         t.add_row(r);
     }
 

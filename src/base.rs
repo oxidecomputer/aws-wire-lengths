@@ -245,8 +245,8 @@ async fn get_instance_x(
 
     let mut out: Vec<Instance> = Vec::new();
 
-    for res in res.reservations().unwrap_or_default() {
-        for inst in res.instances().unwrap_or_default() {
+    for res in res.reservations() {
+        for inst in res.instances() {
             if ignoreterm {
                 let stn = inst.state.as_ref().map(|s| s.name()).flatten();
                 if matches!(stn, Some(InstanceStateName::Terminated)) {
@@ -809,7 +809,7 @@ pub async fn i_upload_snapshot(
             .send()
             .await?;
 
-        if let Some(snap) = res.snapshots().unwrap_or_default().first() {
+        if let Some(snap) = res.snapshots().first() {
             use aws_sdk_ec2::types::SnapshotState as St;
 
             match snap.state() {

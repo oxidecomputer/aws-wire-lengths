@@ -95,15 +95,23 @@ async fn do_peering_ls(mut l: Level<Stuff>) -> Result<()> {
 
     let res = s.ec2().describe_vpc_peering_connections().send().await?;
 
-    for pc in res.vpc_peering_connections().unwrap_or_default() {
+    for pc in res.vpc_peering_connections() {
         let mut r = Row::default();
 
-        r.add_stror("id", &pc.vpc_peering_connection_id, "?");
-        r.add_stror("accepter", &pc.accepter_vpc_info().unwrap().vpc_id, "-");
-        r.add_stror("requester", &pc.requester_vpc_info().unwrap().vpc_id, "-");
+        r.add_stror("id", pc.vpc_peering_connection_id.as_deref(), "?");
+        r.add_stror(
+            "accepter",
+            pc.accepter_vpc_info().unwrap().vpc_id.as_deref(),
+            "-",
+        );
+        r.add_stror(
+            "requester",
+            pc.requester_vpc_info().unwrap().vpc_id.as_deref(),
+            "-",
+        );
         r.add_stror(
             "status",
-            &pc.status().unwrap().code().map(|v| v.as_str().to_string()),
+            pc.status().unwrap().code().map(|v| v.as_str()),
             "-",
         );
 
@@ -133,9 +141,9 @@ async fn do_vpc_ls(mut l: Level<Stuff>) -> Result<()> {
 
         let mut r = Row::default();
 
-        r.add_stror("id", &vpc.vpc_id, "?");
-        r.add_stror("name", &name, "-");
-        r.add_stror("cidr", &vpc.cidr_block, "-");
+        r.add_stror("id", vpc.vpc_id.as_deref(), "?");
+        r.add_stror("name", name.as_deref(), "-");
+        r.add_stror("cidr", vpc.cidr_block.as_deref(), "-");
         r.add_str("flags", &flags);
 
         t.add_row(r);

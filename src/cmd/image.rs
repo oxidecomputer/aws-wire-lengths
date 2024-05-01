@@ -21,6 +21,7 @@ pub async fn do_image(mut l: Level<Stuff>) -> Result<()> {
         "remove launch permission from an account",
         cmd!(image_revoke),
     )?;
+    l.cmd("wait", "wait for an AMI to be ready?", cmd!(do_wait))?;
 
     sel!(l).run().await
 }
@@ -120,6 +121,52 @@ async fn image_revoke(mut l: Level<Stuff>) -> Result<()> {
     Ok(())
 }
 
+async fn wait_for_image(
+    client: &aws_sdk_ec2::Client,
+    new_image: &str,
+) -> Result<()> {
+    eprintln!("new image = {}", new_image);
+    eprintln!("waiting for image to be available...");
+    loop {
+        let image =
+            match client.describe_images().image_ids(new_image).send().await {
+                Ok(res) => {
+                    if let Some(mut images) = res.images {
+                        if images.len() != 1 {
+                            bail!(
+                                "could not find image {} on target region",
+                                new_image
+                            );
+                        }
+                        images.pop().unwrap()
+                    } else {
+                        eprintln!("ERROR: images missing from response");
+                        sleep(1000);
+                        continue;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("ERROR: {:?}", e);
+                    sleep(1000);
+                    continue;
+                }
+            };
+
+        match image.state {
+            Some(aws_sdk_ec2::types::ImageState::Available) => {
+                return Ok(());
+            }
+            Some(aws_sdk_ec2::types::ImageState::Pending) | None => {}
+            Some(other) => {
+                bail!("unexpected image state = {:?}", other);
+            }
+        }
+
+        sleep(5000);
+        continue;
+    }
+}
+
 async fn do_image_copy(mut l: Level<Stuff>) -> Result<()> {
     l.usage_args(Some("AMI-ID|NAME TARGET_REGION"));
     l.optflag("W", "no-wait", "do not wait for copy to complete");
@@ -150,57 +197,35 @@ async fn do_image_copy(mut l: Level<Stuff>) -> Result<()> {
         /*
          * Wait for the image to leave the pending state in the target region.
          */
-        eprintln!("new image = {}", new_image);
-        eprintln!("waiting for image to be available...");
-        loop {
-            let image = match target
-                .describe_images()
-                .image_ids(new_image)
-                .send()
-                .await
-            {
-                Ok(res) => {
-                    if let Some(mut images) = res.images {
-                        if images.len() != 1 {
-                            bail!(
-                                "could not find image {} on target region",
-                                new_image
-                            );
-                        }
-                        images.pop().unwrap()
-                    } else {
-                        eprintln!("ERROR: images missing from response");
-                        sleep(1000);
-                        continue;
-                    }
-                }
-                Err(e) => {
-                    eprintln!("ERROR: {:?}", e);
-                    sleep(1000);
-                    continue;
-                }
-            };
-
-            match image.state {
-                Some(aws_sdk_ec2::types::ImageState::Available) => {
-                    eprintln!(
-                        "image is now available in {}",
-                        a.args()[1].as_str()
-                    );
-                    break;
-                }
-                Some(aws_sdk_ec2::types::ImageState::Pending) | None => {}
-                Some(other) => {
-                    bail!("unexpected image state = {:?}", other);
-                }
-            }
-
-            sleep(5000);
-            continue;
-        }
+        wait_for_image(&target, new_image).await?;
+        eprintln!("image is now available in {}", a.args()[1].as_str());
     }
 
     println!("{}", new_image);
+    Ok(())
+}
+
+async fn do_wait(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("AMI-ID|NAME"));
+
+    let a = args!(l);
+    let c = l.context().ec2();
+
+    if a.args().len() != 1 {
+        bad_args!(l, "specify image ID or name");
+    }
+
+    let image = get_image_fuzzy(l.context(), a.args()[0].as_str()).await?;
+    println!(
+        "image {} name is {:?}",
+        image.image_id().unwrap(),
+        image.name(),
+    );
+
+    wait_for_image(c, &image.image_id().unwrap()).await?;
+
+    println!("image is now available");
+
     Ok(())
 }
 
@@ -223,10 +248,7 @@ async fn image_dump(mut l: Level<Stuff>) -> Result<()> {
         .image_id(image.image_id().unwrap())
         .send()
         .await?;
-    println!(
-        "launch permission = {:#?}",
-        res.launch_permissions.unwrap_or_default()
-    );
+    println!("launch permission = {:#?}", res.launch_permissions());
 
     Ok(())
 }
@@ -244,7 +266,7 @@ async fn images(mut l: Level<Stuff>) -> Result<()> {
 
     let res = s.ec2().describe_images().owners("self").send().await?;
 
-    for i in res.images.unwrap_or_default() {
+    for i in res.images() {
         let mut r = Row::default();
 
         /*

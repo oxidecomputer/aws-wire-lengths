@@ -9,34 +9,35 @@ default = ["vendored-openssl"]
 vendored-openssl = ['openssl/vendored']
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
 anyhow = "1"
+aws-config = "1"
+aws-sdk-ebs = "1"
+aws-sdk-ec2 = "1"
+aws-sdk-ec2instanceconnect = "1"
+aws-sdk-s3 = "1"
+aws-sdk-sts = "1"
+aws-smithy-types = "1"
+aws-types = "1"
+base64 = "0.22"
+bytes = "1"
+chrono = "0.4"
+dirs-next = "2"
+futures = "0.3"
+hiercmd = { git = "https://github.com/jclulow/hiercmd" }
+http-body = "1"
+hyper = { version = "1" }
+rand = "0.8"
+rsa = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-bytes = "1"
-futures = "0.3"
+sha2 = "0.10.1"
+tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = [ "io", "codec" ] }
-rand = "0.8"
-toml = "0.7"
-base64 = "0.21"
-hiercmd = { git = "https://github.com/jclulow/hiercmd" }
+toml = "0.8"
+
 #
 # I believe it is necessary to pull this in here, so that we can demand the
 # static linking of the vendored OpenSSL.  We don't use it directly, but the
 # same version will then be used by reqwest.
 #
 openssl = { version = "0.10", optional = true }
-rsa = "0.8.2"
-dirs-next = "2.0.0"
-aws-config = "0.55.3"
-aws-types = "0.55.3"
-aws-sdk-ec2 = "0.28.0"
-aws-sdk-s3 = "0.28.0"
-aws-sdk-ebs = "0.28.0"
-aws-sdk-sts = "0.28.0"
-aws-sdk-ec2instanceconnect = "0.28.0"
-aws-smithy-types = "0.55.3"
-aws-smithy-http = "0.55.3"
-chrono = "0.4.19"
-hyper = { version = "0.14.16", features = ["stream"] }
-sha2 = "0.10.1"

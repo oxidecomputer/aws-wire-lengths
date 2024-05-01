@@ -364,9 +364,9 @@ async fn do_sg_ls(mut l: Level<Stuff>) -> Result<()> {
     for sg in res.security_groups.as_ref().unwrap_or(&x) {
         let mut r = Row::default();
 
-        r.add_stror("id", &sg.group_id, "?");
-        r.add_stror("name", &sg.group_name, "-");
-        r.add_stror("vpc", &sg.vpc_id, "-");
+        r.add_stror("id", sg.group_id.as_deref(), "?");
+        r.add_stror("name", sg.group_name.as_deref(), "-");
+        r.add_stror("vpc", sg.vpc_id.as_deref(), "-");
         let desc = if let Some(desc) = sg.description.as_deref() {
             if let Some(name) = sg.group_name.as_deref() {
                 desc.trim_start_matches(name)
@@ -378,7 +378,7 @@ async fn do_sg_ls(mut l: Level<Stuff>) -> Result<()> {
             "-"
         };
         r.add_str("desc", desc);
-        r.add_stror("fulldesc", &sg.description, "-");
+        r.add_stror("fulldesc", sg.description.as_deref(), "-");
 
         t.add_row(r);
     }
@@ -481,7 +481,6 @@ async fn apply(mut l: Level<Stuff>) -> Result<()> {
 
     let existing = res
         .security_group_rules()
-        .unwrap_or_default()
         .iter()
         .map(|sgr| {
             Ok((
@@ -616,7 +615,7 @@ async fn show(mut l: Level<Stuff>) -> Result<()> {
         .await?;
 
     for egress in [false, true] {
-        for rule in res.security_group_rules().unwrap_or_default() {
+        for rule in res.security_group_rules() {
             if rule.is_egress.unwrap_or_default() != egress {
                 continue;
             }

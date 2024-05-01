@@ -32,14 +32,14 @@ async fn volumes(mut l: Level<Stuff>) -> Result<()> {
 
     let res = s.ec2().describe_volumes().send().await?;
 
-    for v in res.volumes().unwrap_or_default() {
+    for v in res.volumes() {
         let mut r = Row::default();
 
         /*
          * The magic INFO column contains information we were able to glean by
          * looking further afield.
          */
-        let atts = v.attachments().unwrap();
+        let atts = v.attachments();
         let info = if atts.len() != 1 {
             v.tags.tag("Name").as_deref().unwrap_or("-").to_string()
         } else {
@@ -59,14 +59,14 @@ async fn volumes(mut l: Level<Stuff>) -> Result<()> {
             }
         };
 
-        r.add_stror("id", &v.volume_id, "?");
+        r.add_stror("id", v.volume_id.as_deref(), "?");
         r.add_str("info", &info);
-        r.add_stror("state", &v.state().map(|v| v.as_str().to_string()), "-");
+        r.add_stror("state", v.state().map(|v| v.as_str()), "-");
         r.add_u64("size", v.size.unwrap_or(0) as u64);
-        r.add_stror("snapshot", &v.snapshot_id, "-");
-        r.add_stror("name", &v.tags.tag("Name"), "-");
-        r.add_stror("creation", &v.create_time.as_utc(), "-");
-        r.add_stror("az", &v.availability_zone, "-");
+        r.add_stror("snapshot", v.snapshot_id.as_deref(), "-");
+        r.add_stror("name", v.tags.tag("Name").as_deref(), "-");
+        r.add_stror("creation", v.create_time.as_utc().as_deref(), "-");
+        r.add_stror("az", v.availability_zone.as_deref(), "-");
         r.add_u64("natt", atts.len() as u64);
 
         t.add_row(r);

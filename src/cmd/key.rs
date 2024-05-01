@@ -76,12 +76,12 @@ async fn do_key_ls(mut l: Level<Stuff>) -> Result<()> {
 
     let res = s.ec2().describe_key_pairs().send().await?;
 
-    for kp in res.key_pairs().unwrap_or_default() {
+    for kp in res.key_pairs() {
         let mut r = Row::default();
 
-        r.add_stror("id", &kp.key_pair_id, "?");
-        r.add_stror("name", &kp.key_name, "-");
-        r.add_stror("fingerprint", &kp.key_fingerprint, "-");
+        r.add_stror("id", kp.key_pair_id.as_deref(), "?");
+        r.add_stror("name", kp.key_name.as_deref(), "-");
+        r.add_stror("fingerprint", kp.key_fingerprint.as_deref(), "-");
 
         t.add_row(r);
     }

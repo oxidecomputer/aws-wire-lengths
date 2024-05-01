@@ -18,20 +18,16 @@ async fn list(mut l: Level<Stuff>) -> Result<()> {
 
     let res = s.ec2().describe_network_interfaces().send().await?;
 
-    for ni in res.network_interfaces().unwrap_or_default().iter() {
+    for ni in res.network_interfaces() {
         let n = ni.tag_set.tag("Name");
 
         let mut r = Row::default();
-        r.add_stror("id", &ni.network_interface_id, "?");
-        r.add_stror("name", &n, "-");
-        r.add_stror(
-            "type",
-            &ni.interface_type().map(|it| it.as_str().to_string()),
-            "-",
-        );
+        r.add_stror("id", ni.network_interface_id.as_deref(), "?");
+        r.add_stror("name", n.as_deref(), "-");
+        r.add_stror("type", ni.interface_type().map(|it| it.as_str()), "-");
 
         if let Some(assoc) = ni.association() {
-            r.add_stror("eip", &assoc.allocation_id, "-");
+            r.add_stror("eip", assoc.allocation_id.as_deref(), "-");
         } else {
             r.add_str("eip", "-");
         };

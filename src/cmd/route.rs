@@ -207,12 +207,12 @@ async fn list(mut l: Level<Stuff>) -> Result<()> {
         .send()
         .await?;
 
-    for rt in res.route_tables().unwrap_or_default().iter() {
+    for rt in res.route_tables() {
         let n = rt.tags.tag("Name");
 
         let mut r = Row::default();
-        r.add_stror("id", &rt.route_table_id, "?");
-        r.add_stror("name", &n, "-");
+        r.add_stror("id", rt.route_table_id.as_deref(), "?");
+        r.add_stror("name", n.as_deref(), "-");
         t.add_row(r);
     }
 
@@ -388,11 +388,7 @@ async fn show(mut l: Level<Stuff>) -> Result<()> {
             continue;
         }
 
-        r.add_stror(
-            "state",
-            &rt.state.as_ref().map(|s| s.as_str().to_string()),
-            "?",
-        );
+        r.add_stror("state", rt.state.as_ref().map(|s| s.as_str()), "?");
         r.add_str("target", &target.info());
         r.add_str("type", target.type_column());
         r.add_str("flags", &flags);
