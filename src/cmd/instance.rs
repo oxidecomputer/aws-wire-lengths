@@ -15,6 +15,7 @@ pub async fn do_instance(mut l: Level<Stuff>) -> Result<()> {
     l.cmd("start", "start an instance", cmd!(start))?;
     l.cmd("reboot", "reboot an instance", cmd!(reboot))?;
     l.cmd("stop", "stop an instance", cmd!(stop))?;
+    l.cmd("resize", "change insance type", cmd!(resize))?;
     l.cmd("protect", "enable termination protection", cmd!(protect))?;
     l.cmd(
         "unprotect",
@@ -645,6 +646,31 @@ async fn nospoof(mut l: Level<Stuff>) -> Result<()> {
     println!("disabling spoofing for instance: {:?}", i);
 
     instance_spoofing(l.context(), &i.id, false).await?;
+
+    println!("all done!");
+
+    Ok(())
+}
+
+async fn resize(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("INSTANCE TYPE"));
+    l.optflag("E", "", "enable ENA for this instance");
+
+    let a = args!(l);
+
+    if a.args().len() != 2 {
+        bail!("expect an instance and a new instance type");
+    }
+
+    let i = get_instance_fuzzy(l.context(), a.args().first().unwrap()).await?;
+
+    change_instance_type(
+        l.context(),
+        &i.id,
+        &a.args()[1],
+        a.opts().opt_present("E"),
+    )
+    .await?;
 
     println!("all done!");
 

@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Result};
 use aws_sdk_ebs::primitives::DateTimeFormat;
+use aws_sdk_ec2::types::builders::AttributeValueBuilder;
 use aws_sdk_ec2::types::{
     ArchitectureValues, AttributeBooleanValue, BlockDeviceMapping,
     EbsBlockDevice, Filter, InstanceStateName, SecurityGroup, Tag, VolumeType,
@@ -139,6 +140,34 @@ pub async fn instance_spoofing(s: &Stuff, id: &str, spoof: bool) -> Result<()> {
         .source_dest_check(
             AttributeBooleanValue::builder().value(!spoof).build(),
         )
+        .send()
+        .await?;
+
+    Ok(())
+}
+
+pub async fn change_instance_type(
+    s: &Stuff,
+    id: &str,
+    new: &str,
+    ena: bool,
+) -> Result<()> {
+    if ena {
+        println!("enabling ENA for instance {id}...");
+        s.ec2()
+            .modify_instance_attribute()
+            .instance_id(id)
+            .ena_support(AttributeBooleanValue::builder().value(true).build())
+            .send()
+            .await?;
+    }
+
+    println!("setting instance type to {new:?} on instance {id}...");
+
+    s.ec2()
+        .modify_instance_attribute()
+        .instance_id(id)
+        .instance_type(AttributeValueBuilder::default().value(new).build())
         .send()
         .await?;
 
