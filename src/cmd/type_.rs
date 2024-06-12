@@ -19,6 +19,8 @@ async fn do_type_ls(mut l: Level<Stuff>) -> Result<()> {
     l.add_column("vcpu", 4, true);
     l.add_column("ram", 9, true);
     l.add_column("flags", 5, true);
+    l.add_column("netperf", 16, false);
+    l.add_column("bandwidth", 9, false);
 
     let a = no_args!(l);
     let mut t = a.table();
@@ -91,6 +93,16 @@ async fn do_type_ls(mut l: Level<Stuff>) -> Result<()> {
                 .and_then(|ci| ci.default_v_cpus())
                 .unwrap_or(0);
 
+            let mbps = typ
+                .network_info()
+                .and_then(|ni| ni.network_cards().get(0))
+                .and_then(|nic| nic.peak_bandwidth_in_gbps())
+                .map(|gbps| (gbps * 1000.0).round() as u64)
+                .unwrap_or(0);
+
+            let netperf =
+                typ.network_info().and_then(|ni| ni.network_performance());
+
             let ena =
                 typ.network_info().map(|ni| ni.ena_support()).flatten().map(
                     |ena| {
@@ -110,6 +122,8 @@ async fn do_type_ls(mut l: Level<Stuff>) -> Result<()> {
             r.add_bytes("ram", memory_bytes.try_into().unwrap());
             r.add_u64("vcpu", vcpu.try_into().unwrap());
             r.add_str("flags", &flags);
+            r.add_u64("bandwidth", mbps);
+            r.add_stror("netperf", netperf, "?");
 
             t.add_row(r);
         }
