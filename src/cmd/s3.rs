@@ -75,16 +75,51 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
     let a = args!(l);
     let s = l.context();
 
-    if a.args().is_empty() {
-        bad_args!(l, "specify a bucket name to examine");
+    if a.args().len() != 1 {
+        bad_args!(l, "specify exactly one bucket name to examine");
     }
 
     let bucket = a.args().get(0).unwrap();
 
+    macro_rules! emit {
+        ($name:literal, $expr:expr) => {
+            println!("    {:30} {:?}", format!("{}:", $name), $expr);
+        };
+    }
+
+    match s
+        .s3()
+        .get_bucket_policy_status()
+        .bucket(bucket)
+        .send()
+        .await
+    {
+        Ok(res) => match res.policy_status() {
+            Some(v) => {
+                println!("policy status:");
+                emit!("is public", v.is_public());
+            }
+            None => println!("no policy status for bucket?!"),
+        },
+        Err(SdkError::ServiceError(err))
+            if err.err().meta().code() == Some("NoSuchBucketPolicy") =>
+        {
+            println!("no policy status for bucket");
+        }
+        Err(e) => {
+            return Err(e.into());
+        }
+    };
+    println!();
+
     match s.s3().get_public_access_block().bucket(bucket).send().await {
         Ok(res) => match res.public_access_block_configuration() {
             Some(v) => {
-                println!("public access block: {:#?}", v);
+                println!("public access block:");
+                emit!("block public ACLs", v.block_public_acls());
+                emit!("ignore public ACLs", v.ignore_public_acls());
+                emit!("block public policy", v.block_public_policy());
+                emit!("restrict public buckets", v.restrict_public_buckets());
             }
             None => println!("no public access block for bucket?!"),
         },
@@ -98,15 +133,20 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
             return Err(e.into());
         }
     };
+    println!();
 
     match s.s3().get_bucket_policy().bucket(bucket).send().await {
-        Ok(res) => match res.policy {
+        Ok(res) => match res.policy() {
             Some(policy) => {
                 /*
                  * Pretty-print the policy document as JSON:
                  */
-                let policy: serde_json::Value = serde_json::from_str(&policy)?;
-                println!("policy: {}", serde_json::to_string_pretty(&policy)?);
+                let policy: serde_json::Value = serde_json::from_str(policy)?;
+                let out = serde_json::to_string_pretty(&policy)?
+                    .lines()
+                    .map(|l| format!("    {l}\n"))
+                    .collect::<String>();
+                print!("policy:\n{out}");
             }
             None => println!("no policy for bucket?!"),
         },
@@ -119,32 +159,13 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
             return Err(e.into());
         }
     };
-
-    match s
-        .s3()
-        .get_bucket_policy_status()
-        .bucket(bucket)
-        .send()
-        .await
-    {
-        Ok(res) => match res.policy_status() {
-            Some(v) => {
-                println!("policy status: {:#?}", v);
-            }
-            None => println!("no policy status for bucket?!"),
-        },
-        Err(SdkError::ServiceError(err))
-            if err.err().meta().code() == Some("NoSuchBucketPolicy") =>
-        {
-            println!("no policy status for bucket");
-        }
-        Err(e) => {
-            return Err(e.into());
-        }
-    };
+    println!();
 
     let res = s.s3().get_bucket_versioning().bucket(bucket).send().await?;
-    println!("versioning: {:#?}", res);
+    println!("versioning:");
+    emit!("status", res.status());
+    emit!("mfa_delete", res.mfa_delete());
+    println!();
 
     match s
         .s3()
@@ -154,8 +175,15 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
         .await
     {
         Ok(res) => match res.ownership_controls() {
-            Some(v) => {
-                println!("ownership controls: {:#?}", v);
+            Some(oc) => {
+                println!("ownership control rules:");
+                for r in oc.rules() {
+                    let out = format!("{r:#?}")
+                        .lines()
+                        .map(|l| format!("    {l}\n"))
+                        .collect::<String>();
+                    print!("{out}");
+                }
             }
             None => println!("no ownership controls for bucket?!"),
         },
@@ -169,6 +197,36 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
             return Err(e.into());
         }
     };
+    println!();
+
+    match s
+        .s3()
+        .get_bucket_lifecycle_configuration()
+        .bucket(bucket)
+        .send()
+        .await
+    {
+        Ok(res) => {
+            println!("lifecycle rules:");
+            for r in res.rules() {
+                let out = format!("{r:#?}")
+                    .lines()
+                    .map(|l| format!("    {l}\n"))
+                    .collect::<String>();
+                print!("{out}");
+            }
+        }
+        Err(SdkError::ServiceError(err))
+            if err.err().meta().code()
+                == Some("NoSuchLifecycleConfiguration") =>
+        {
+            println!("no lifecycle rules for bucket");
+        }
+        Err(e) => {
+            return Err(e.into());
+        }
+    };
+    println!();
 
     Ok(())
 }
