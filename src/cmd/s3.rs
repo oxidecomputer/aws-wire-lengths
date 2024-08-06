@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use aws_sdk_s3::error::SdkError;
 
 use crate::prelude::*;
@@ -30,6 +32,11 @@ async fn do_bucket(mut l: Level<Stuff>) -> Result<()> {
     l.cmda("list", "ls", "list buckets", cmd!(do_bucket_ls))?;
     l.cmd("show", "show detail about a bucket", cmd!(do_bucket_show))?;
     l.cmd("create", "create a bucket", cmd!(do_bucket_create))?;
+    l.cmd(
+        "uploads",
+        "show unfinished multipart uploads for a bucket",
+        cmd!(do_bucket_uploads),
+    )?;
 
     sel!(l).run().await
 }
@@ -227,6 +234,69 @@ async fn do_bucket_show(mut l: Level<Stuff>) -> Result<()> {
         }
     };
     println!();
+
+    Ok(())
+}
+
+async fn do_bucket_uploads(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("BUCKET"));
+
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 1 {
+        bad_args!(l, "specify exactly one bucket name to examine");
+    }
+
+    let bucket = a.args().get(0).unwrap();
+
+    let mut upload_id_marker = None;
+    loop {
+        let mpus = s
+            .s3()
+            .list_multipart_uploads()
+            .bucket(bucket)
+            .set_upload_id_marker(upload_id_marker.clone())
+            .send()
+            .await?;
+
+        for mpu in mpus.uploads() {
+            let Some(key) = mpu.key() else {
+                eprintln!("WARNING: upload without key!");
+                continue;
+            };
+
+            let age_secs = mpu
+                .initiated()
+                .map(|dt| {
+                    let when: u64 = dt.to_millis().unwrap().try_into().unwrap();
+                    let now: u64 = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis()
+                        .try_into()
+                        .unwrap();
+
+                    (if when <= now { now - when } else { 0 }) / 1000
+                })
+                .unwrap_or(0);
+
+            println!("{age_secs:12} {key}");
+        }
+
+        /*
+         * Only request another page if we were given a non-empty marker:
+         */
+        if let Some(next) = mpus.next_upload_id_marker() {
+            if next.is_empty() {
+                break;
+            }
+
+            upload_id_marker = Some(next.to_string());
+        } else {
+            break;
+        }
+    }
 
     Ok(())
 }
