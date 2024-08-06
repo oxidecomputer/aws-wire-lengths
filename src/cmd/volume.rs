@@ -11,6 +11,11 @@ pub async fn do_volume(mut l: Level<Stuff>) -> Result<()> {
         "create a snapshot of a volume",
         cmd!(do_volume_snapshot),
     )?;
+    l.cmd(
+        "resize",
+        "adjust the size of a volume",
+        cmd!(do_volume_resize),
+    )?;
 
     sel!(l).run().await
 }
@@ -20,8 +25,8 @@ async fn volumes(mut l: Level<Stuff>) -> Result<()> {
     l.add_column("id", 21, true);
     l.add_column("state", 10, true);
     l.add_column("natt", 4, true); /* Number of attachments */
+    l.add_column("size", 8, true);
     l.add_column("info", 30, true);
-    l.add_column("size", 5, false);
     l.add_column("snapshot", 22, false);
     l.add_column("name", 24, false);
     l.add_column("az", WIDTH_AZ, false);
@@ -62,7 +67,7 @@ async fn volumes(mut l: Level<Stuff>) -> Result<()> {
         r.add_stror("id", v.volume_id.as_deref(), "?");
         r.add_str("info", &info);
         r.add_stror("state", v.state().map(|v| v.as_str()), "-");
-        r.add_u64("size", v.size.unwrap_or(0) as u64);
+        r.add_bytes("size", (v.size.unwrap_or(0) as u64) * 1024 * 1024 * 1024);
         r.add_stror("snapshot", v.snapshot_id.as_deref(), "-");
         r.add_stror("name", v.tags.tag("Name").as_deref(), "-");
         r.add_stror("creation", v.create_time.as_utc().as_deref(), "-");
@@ -226,6 +231,45 @@ async fn do_volume_snapshot(mut l: Level<Stuff>) -> Result<()> {
     if let Some(id) = &res.snapshot_id {
         println!("snapshot id = {id}");
     }
+
+    Ok(())
+}
+
+async fn do_volume_resize(mut l: Level<Stuff>) -> Result<()> {
+    l.usage_args(Some("VOLUME SIZE_GB"));
+
+    let a = args!(l);
+    let s = l.context();
+
+    if a.args().len() != 2 {
+        bad_args!(l, "specify volume and new size in gigabytes");
+    }
+
+    let newsize: i32 = a.args().get(1).unwrap().parse()?;
+    let v = get_vol_fuzzy(s, a.args().get(0).unwrap().as_str()).await?;
+
+    if let Some(oldsize) = v.size() {
+        if oldsize == newsize {
+            eprintln!(
+                "volume size is already {oldsize}GiB, no action required"
+            );
+            return Ok(());
+        } else if oldsize > newsize {
+            bail!("volume is already {oldsize}GiB; volumes can only grow");
+        }
+    } else {
+        bail!("could not determine existing volume size");
+    }
+
+    let res = s
+        .ec2()
+        .modify_volume()
+        .volume_id(v.volume_id.as_deref().unwrap())
+        .size(newsize)
+        .send()
+        .await?;
+
+    println!("{:#?}", res);
 
     Ok(())
 }
