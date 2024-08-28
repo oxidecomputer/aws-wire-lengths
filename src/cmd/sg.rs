@@ -51,7 +51,10 @@ impl Rule {
                     .build(),
             ),
             RuleTarget::Ipv4(cidr) => b.ip_ranges(
-                aws_sdk_ec2::types::IpRange::builder().cidr_ip(cidr).build(),
+                aws_sdk_ec2::types::IpRange::builder()
+                    .cidr_ip(cidr)
+                    .set_description(self.description.clone())
+                    .build(),
             ),
             RuleTarget::Ipv6Any => b.ipv6_ranges(
                 aws_sdk_ec2::types::Ipv6Range::builder()
