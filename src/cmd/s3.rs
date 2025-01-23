@@ -624,7 +624,7 @@ async fn do_object_put(mut l: Level<Stuff>) -> Result<()> {
         /*
          * We do not want to close stdin here, so get it back:
          */
-        f.into_raw_fd();
+        let _f = f.into_raw_fd();
 
         if md.is_file() {
             Some(md.len())
