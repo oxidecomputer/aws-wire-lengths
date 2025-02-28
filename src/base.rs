@@ -1,3 +1,7 @@
+/*
+ * Copyright 2025 Oxide Computer Company
+ */
+
 use std::fs::File;
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -386,16 +390,25 @@ pub async fn get_image_fuzzy(
     s: &Stuff,
     lookuparg: &str,
 ) -> Result<aws_sdk_ec2::types::Image> {
-    let res = s
-        .ec2()
-        .describe_images()
+    let is_id = lookuparg.starts_with("ami-");
+
+    let mut q = s.ec2().describe_images();
+
+    /*
+     * If we have a fully qualified image ID, we want the lookup to potentially
+     * load an image from another account that has been made visible to us via
+     * an ACL.  If we're looking up by name, restrict the lookup to images
+     * directly owned by this account, to avoid names from other accounts
+     * leaking in.
+     */
+    if !is_id {
+        q = q.owners("self");
+    }
+
+    let res = q
         .filters(
             aws_sdk_ec2::types::Filter::builder()
-                .name(if lookuparg.starts_with("ami-") {
-                    "image-id"
-                } else {
-                    "name"
-                })
+                .name(if is_id { "image-id" } else { "name" })
                 .values(lookuparg)
                 .build(),
         )
