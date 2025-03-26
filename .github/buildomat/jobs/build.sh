@@ -7,6 +7,9 @@
 #: output_rules = [
 #:	"/work/awl.*",
 #: ]
+#: access_repos = [
+#:   "oxidecomputer/yoursecretsgivethemtome",
+#: ]
 
 set -o errexit
 set -o pipefail
