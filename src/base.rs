@@ -353,11 +353,13 @@ async fn get_instance_x(
     }
 
     if out.len() > 1 {
-        bail!(
-            "found too many instances that match {:?}: {:#?}",
-            lookup,
-            out
-        );
+        let ids = out
+            .iter()
+            .map(|i| i.id.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        bail!("found too many instances that match {lookup:?}: {ids}");
     }
 
     Ok(out.pop().unwrap())
