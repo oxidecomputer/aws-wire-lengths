@@ -33,7 +33,7 @@ serde_json = "1"
 sha2 = "0.10.1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = [ "io", "codec" ] }
-toml = "0.8"
+toml = "0.9"
 
 #
 # I believe it is necessary to pull this in here, so that we can demand the

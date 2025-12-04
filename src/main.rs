@@ -69,7 +69,7 @@ pub struct Stuff {
 #[allow(dead_code)]
 impl Stuff {
     fn aws_config_loader() -> aws_config::ConfigLoader {
-        aws_config::defaults(aws_config::BehaviorVersion::v2024_03_28())
+        aws_config::defaults(aws_config::BehaviorVersion::v2025_08_07())
     }
 
     fn region_ec2(&self) -> &Region {
