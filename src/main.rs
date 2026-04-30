@@ -37,6 +37,7 @@ mod cmd;
 use cmd::az::do_az;
 use cmd::config::do_config;
 use cmd::gateway::do_gateway;
+use cmd::iam::do_iam;
 use cmd::image::{ami_from_file, do_image};
 use cmd::instance::do_instance;
 use cmd::interface::do_if;
@@ -61,6 +62,7 @@ pub struct Stuff {
 
     ec2: Option<aws_sdk_ec2::Client>,
     ebs: Option<aws_sdk_ebs::Client>,
+    iam: Option<aws_sdk_iam::Client>,
     s3: Option<aws_sdk_s3::Client>,
     sts: Option<aws_sdk_sts::Client>,
     ec2ic: Option<aws_sdk_ec2instanceconnect::Client>,
@@ -98,6 +100,10 @@ impl Stuff {
             .load()
             .await;
         aws_sdk_ec2::Client::new(&cfg)
+    }
+
+    pub fn iam(&self) -> &aws_sdk_iam::Client {
+        self.iam.as_ref().unwrap()
     }
 
     pub fn s3(&self) -> &aws_sdk_s3::Client {
@@ -157,6 +163,7 @@ async fn main() -> Result<()> {
     l.cmd("type", "instance type management", cmd!(do_type))?;
     l.cmd("az", "availability zone management", cmd!(do_az))?;
     l.cmda("s3", "s", "S3 object storage", cmd!(do_s3))?;
+    l.cmd("iam", "identity and access management", cmd!(do_iam))?;
     /*
      * XXX These are used in some scripts, so leave them (but hidden) for now.
      */
@@ -220,6 +227,12 @@ async fn main() -> Result<()> {
         .load()
         .await;
     s.context_mut().ebs = Some(aws_sdk_ebs::Client::new(&cfg));
+
+    let cfg = Stuff::aws_config_loader()
+        .region(s.context().region_ec2().clone())
+        .load()
+        .await;
+    s.context_mut().iam = Some(aws_sdk_iam::Client::new(&cfg));
 
     let cfg = Stuff::aws_config_loader()
         .region(s.context().region_s3().clone())

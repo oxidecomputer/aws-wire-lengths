@@ -202,6 +202,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-iam"
+version = "1.99.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "508c5831cbe041b0903f933d14ec886342713acc4bbe3c0610e5b9476b96ae56"
+dependencies = [
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-query",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-smithy-xml",
+ "aws-types",
+ "fastrand",
+ "http 0.2.12",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-s3"
 version = "1.116.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -551,6 +574,7 @@ dependencies = [
  "aws-sdk-ebs",
  "aws-sdk-ec2",
  "aws-sdk-ec2instanceconnect",
+ "aws-sdk-iam",
  "aws-sdk-s3",
  "aws-sdk-sts",
  "aws-smithy-types",
@@ -564,6 +588,7 @@ dependencies = [
  "http-body 1.0.1",
  "hyper 1.8.1",
  "openssl",
+ "pct-str",
  "rand 0.8.5",
  "rsa",
  "serde",
@@ -1793,6 +1818,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pct-str"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf1bdcc492c285a50bed60860dfa00b50baf1f60c73c7d6b435b01a2a11fd6ff"
+dependencies = [
+ "thiserror",
+ "utf8-decode",
+]
+
+[[package]]
 name = "pem-rfc7468"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2728,6 +2763,12 @@ name = "urlencoding"
 version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
+
+[[package]]
+name = "utf8-decode"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca61eb27fa339aa08826a29f03e87b99b4d8f0fc2255306fd266bb1b6a9de498"
 
 [[package]]
 name = "utf8_iter"

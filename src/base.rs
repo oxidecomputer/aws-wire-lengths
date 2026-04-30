@@ -535,6 +535,27 @@ pub async fn get_vpc_fuzzy(
     one_ping_only("VPC", lookuparg, res.vpcs)
 }
 
+pub async fn get_role_fuzzy(
+    s: &Stuff,
+    lookuparg: &str,
+) -> Result<aws_sdk_iam::types::Role> {
+    let res = s
+        .iam()
+        .list_roles()
+        .send()
+        .await?
+        .roles
+        .into_iter()
+        .filter(|r| {
+            r.arn() == lookuparg
+                || r.role_name() == lookuparg
+                || r.role_id() == lookuparg
+        })
+        .collect::<Vec<_>>();
+
+    one_ping_only("role", lookuparg, Some(res))
+}
+
 pub async fn get_sg_fuzzy(s: &Stuff, lookuparg: &str) -> Result<SecurityGroup> {
     let res = s
         .ec2()

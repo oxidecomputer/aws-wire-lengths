@@ -15,6 +15,7 @@ pub const WIDTH_NAT: usize = 21;
 pub const WIDTH_EIP: usize = 26;
 pub const WIDTH_ENI: usize = 21;
 pub const WIDTH_VOL: usize = 21;
+pub const WIDTH_AROA: usize = 21;
 
 pub const WIDTH_UTC: usize = 20;
 
@@ -145,6 +146,13 @@ impl DisplayId for aws_sdk_ec2::types::NatGateway {
         self.nat_gateway_id().expect("nat_gateway_id").to_string()
     }
 }
+
+impl DisplayId for aws_sdk_iam::types::Role {
+    fn display_id(&self) -> String {
+        self.role_id().to_string()
+    }
+}
+
 pub fn one_ping_only<T>(
     noun: &str,
     filter: &str,

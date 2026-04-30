@@ -14,6 +14,7 @@ aws-config = "1"
 aws-sdk-ebs = "1"
 aws-sdk-ec2 = "1"
 aws-sdk-ec2instanceconnect = "1"
+aws-sdk-iam = "1"
 aws-sdk-s3 = "1"
 aws-sdk-sts = "1"
 aws-smithy-types = "1"
@@ -26,6 +27,7 @@ futures = "0.3"
 hiercmd = { git = "https://github.com/jclulow/hiercmd" }
 http-body = "1"
 hyper = { version = "1" }
+pct-str = "2"
 rand = "0.8"
 rsa = "0.9"
 serde = { version = "1", features = ["derive"] }

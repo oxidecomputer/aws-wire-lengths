@@ -1,6 +1,7 @@
 pub mod az;
 pub mod config;
 pub mod gateway;
+pub mod iam;
 pub mod image;
 pub mod instance;
 pub mod interface;
