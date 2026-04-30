@@ -288,6 +288,7 @@ async fn nmi(mut l: Level<Stuff>) -> Result<()> {
 
 async fn sercons(mut l: Level<Stuff>) -> Result<()> {
     l.optflag("S", "start", "start the instance before we try to connect");
+    l.optflag("v", "verbose", "verbose output");
 
     let a = args!(l);
     let s = l.context();
@@ -297,6 +298,7 @@ async fn sercons(mut l: Level<Stuff>) -> Result<()> {
     }
 
     let start = a.opts().opt_present("start");
+    let verbose = a.opts().opt_present("verbose");
 
     let i = get_instance_fuzzy(l.context(), a.args().get(0).unwrap()).await?;
 
@@ -470,6 +472,10 @@ async fn sercons(mut l: Level<Stuff>) -> Result<()> {
 
     let pubkey = format!("ssh-rsa {}", base64_encode(&raw));
 
+    if verbose {
+        println!("using public key: {pubkey}");
+    }
+
     if start {
         start_instance(s, &i.id).await?;
     }
@@ -557,23 +563,33 @@ async fn sercons(mut l: Level<Stuff>) -> Result<()> {
         println!();
     }
 
+    let mut cmd = std::process::Command::new("ssh");
+    /*
+     * Make sure we do not end up using other sources of public keys, like an
+     * ambient SSH agent.  The AWS SSH server gets very sad if more than one SSH
+     * public key is presented.
+     */
+    cmd.arg("-o").arg("IdentitiesOnly=yes");
+    cmd.arg("-o").arg("IdentityAgent=none");
+
+    cmd.arg("-o").arg(format!(
+        "UserKnownHostsFile={}",
+        path_knownhosts.to_str().unwrap(),
+    ));
+    cmd.arg("-e").arg("#");
+    cmd.arg("-i").arg(path_pemfile);
+    cmd.arg(format!(
+        "{}.port0@serial-console.ec2-instance-connect.{}.aws",
+        i.id,
+        s.region_ec2().to_string(),
+    ));
+
+    if verbose {
+        println!("SSH command: {cmd:?}");
+    }
+
     println!("Connecting to serial console.  Escape sequence is <Enter>#.");
-    let err = std::process::Command::new("ssh")
-        .arg("-o")
-        .arg(format!(
-            "UserKnownHostsFile={}",
-            path_knownhosts.to_str().unwrap()
-        ))
-        .arg("-e")
-        .arg("#")
-        .arg("-i")
-        .arg(path_pemfile)
-        .arg(format!(
-            "{}.port0@serial-console.ec2-instance-connect.{}.aws",
-            i.id,
-            s.region_ec2().to_string(),
-        ))
-        .exec();
+    let err = cmd.exec();
 
     bail!("SSH exec error: {:?}", err);
 }
